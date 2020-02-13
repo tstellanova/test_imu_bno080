@@ -13,8 +13,11 @@ use cortex_m::interrupt::{self, Mutex};
 
 //use stm32h7xx_hal as processor_hal;
 use stm32f4xx_hal as processor_hal;
+use processor_hal::prelude::*;
 
-//use stm32h7xx_hal::pac as pac;
+use processor_hal::stm32 as pac;
+use pac::I2C1;
+//use pac::DWT;
 
 
 #[macro_use]
@@ -57,9 +60,16 @@ use processor_hal::rcc::RccExt;
 
 use core::ops::{DerefMut};
 
-use processor_hal::{prelude::*, stm32};
 use core::ptr::{null, null_mut};
 use cmsis_rtos2::{ osMessageQueueId_t};
+use bno080::*;
+
+//const IMU_READ_PERIOD: u32 = 10_000;
+
+type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
+  (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>,
+   processor_hal::gpio::gpiob::PB9<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>)
+>>;
 
 #[cfg(debug_assertions)]
 type DebugLog = cortex_m_log::printer::semihosting::Semihosting<cortex_m_log::modes::InterruptFree, cortex_m_semihosting::hio::HStdout>;
@@ -71,7 +81,13 @@ type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::O
 static APP_CLOCKS:  Mutex<RefCell< Option< Clocks >>> = Mutex::new(RefCell::new(None));
 static USER_LED_1:  Mutex<RefCell<Option< GpioTypeUserLed1>>> = Mutex::new(RefCell::new(None));
 
+static I2C1_DRIVER: Mutex<RefCell<Option< ImuDriverType>>> = Mutex::new(RefCell::new(None));
+
 static mut GLOBAL_QUEUE_HANDLE: Option< osMessageQueueId_t  > = None;
+
+
+
+
 
 // cortex-m-rt is setup to call DefaultHandler for a number of fault conditions
 // we can override this in debug mode for handy debugging
@@ -106,6 +122,9 @@ fn toggle_leds() {
     }
   });
 }
+
+
+
 
 
 #[no_mangle]
@@ -189,14 +208,28 @@ pub fn setup_repeated_blink_timer() {
 }
 
 
+
+fn spin_driver() {
+  interrupt::free(|cs| {
+    if let Some(ref mut i2c_driver) = I2C1_DRIVER.borrow(cs).borrow_mut().deref_mut() {
+      i2c_driver.handle_all_messages();
+    }
+  });
+}
+
+
 #[no_mangle]
 extern "C" fn repeated_imu_cb(_arg: *mut cty::c_void) {
-  //toggle_leds();
   //d_print!(get_debug_log(), ".");
+  spin_driver();
 }
 
 
 pub fn setup_repeated_imu_timer() {
+
+
+
+
   let tid = cmsis_rtos2::rtos_os_timer_new(
     Some(repeated_imu_cb),
     cmsis_rtos2::osTimerType_t_osTimerPeriodic,
@@ -259,7 +292,9 @@ pub fn setup_default_threads() {
 fn setup_peripherals()  {
   //d_print!(get_debug_log(), "setup_peripherals...");
 
-  let dp = stm32::Peripherals::take().unwrap();
+  let dp = pac::Peripherals::take().unwrap();
+  let cp = cortex_m::Peripherals::take().unwrap();
+//  DWT.enable_cycle_counter();
 
   let gpioc = dp.GPIOC.split();
   let mut user_led1 = gpioc.pc13.into_push_pull_output();
@@ -272,10 +307,29 @@ fn setup_peripherals()  {
   //set initial states of user LEDs
   user_led1.set_high().unwrap();
 
+
+  let mut delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
+
+  let gpiob = dp.GPIOB.split();
+
+  let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
+  let sda = gpiob.pb9.into_alternate_af4().internal_pull_up(true).set_open_drain();
+  let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), clocks);
+  let mut i2c1_driver = BNO080::new(imu_i2c_port);
+  let res = i2c1_driver.init(&mut delay_source);
+  if res.is_err() {
+    d_println!(get_debug_log(), "bno080 init err {:?}", res);
+  }
+  else {
+    d_println!(get_debug_log(), "bno080 OK");
+  }
+
+
   //store shared peripherals
   interrupt::free(|cs| {
     APP_CLOCKS.borrow(cs).replace(Some(clocks));
     USER_LED_1.borrow(cs).replace(Some(user_led1));
+    I2C1_DRIVER.borrow(cs).replace(Some(i2c1_driver));
   });
 
   //d_println!(get_debug_log(), "done!");
