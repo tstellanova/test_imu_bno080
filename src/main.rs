@@ -25,9 +25,7 @@ extern crate cortex_m_rt;
 
 use cortex_m_rt::{entry, ExceptionFrame};
 
-//use processor_hal::hal::digital::v2::OutputPin;
 use processor_hal::hal::digital::v2::ToggleableOutputPin;
-//use processor_hal::hal::digital::v2::InputPin;
 
 
 use cmsis_rtos2;
@@ -39,9 +37,9 @@ pub static SystemCoreClock: u32 = 16_000_000; //or use stm32f4xx_hal rcc::HSI
 // 48_000_000 for stm32h743 HSI (48 MHz)
 
 #[cfg(debug_assertions)]
-use cortex_m_log::{print, println};
+use cortex_m_log::{println};
 
-use cortex_m_log::{d_print, d_println};
+use cortex_m_log::{d_println};
 // FOR itm mode:
 //use cortex_m_log::{
 //  destination::Itm, printer::itm::InterruptSync as InterruptSyncItm,
@@ -64,7 +62,9 @@ use core::ptr::{null, null_mut};
 //use cmsis_rtos2::{ osMessageQueueId_t};
 use bno080::*;
 
-//const IMU_READ_PERIOD: u32 = 10_000;
+const IMU_REPORTING_RATE_HZ: u16 = 500;
+const IMU_REPORTING_INTERVAL_MS: u16 = (1000 / IMU_REPORTING_RATE_HZ) ;
+
 
 type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
   (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>,
@@ -74,23 +74,16 @@ type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
 #[cfg(debug_assertions)]
 type DebugLog = cortex_m_log::printer::semihosting::Semihosting<cortex_m_log::modes::InterruptFree, cortex_m_semihosting::hio::HStdout>;
 
-//TODO this kind of hardcoding is not ergonomic
-
 type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
-
-//type DelaySourceType = embedded_hal::blocking::delay::DelayMs<T: ?Sized>;
 
 static APP_CLOCKS:  Mutex<RefCell< Option< Clocks >>> = Mutex::new(RefCell::new(None));
 static USER_LED_1:  Mutex<RefCell<Option< GpioTypeUserLed1>>> = Mutex::new(RefCell::new(None));
 
-
 static APP_DELAY_SOURCE: Mutex<RefCell<Option<  processor_hal::delay::Delay >>> = Mutex::new(RefCell::new(None));
-static I2C1_DRIVER: Mutex<RefCell<Option< ImuDriverType>>> = Mutex::new(RefCell::new(None));
-
+static IMU_DRIVER: Mutex<RefCell<Option< ImuDriverType>>> = Mutex::new(RefCell::new(None));
 
 
 //static mut GLOBAL_QUEUE_HANDLE: Option< osMessageQueueId_t  > = None;
-
 
 
 
@@ -119,7 +112,6 @@ fn get_debug_log() -> DebugLog {
 }
 
 
-
 // Toggle the user leds from their prior state
 fn toggle_leds() {
   interrupt::free(|cs| {
@@ -128,9 +120,6 @@ fn toggle_leds() {
     }
   });
 }
-
-
-
 
 
 //#[no_mangle]
@@ -184,20 +173,16 @@ fn toggle_leds() {
 //}
 
 
-
-
-//if let Some(ref mut delay_source) = APP_DELAY_SOURCE.borrow(cs).borrow_mut().deref_mut()  {
-//imu_driver.init(delay_source)
-//}
-
-#[no_mangle]
-extern "C" fn task_kicker(_arg: *mut cty::c_void) {
-
+fn setup_imu() {
+  // initialize the IMU
   let mut res = Ok(());
   interrupt::free(|cs| {
-    if let Some(ref mut imu_driver) = I2C1_DRIVER.borrow(cs).borrow_mut().deref_mut() {
+    if let Some(ref mut imu_driver) = IMU_DRIVER.borrow(cs).borrow_mut().deref_mut() {
       if let Some(delay_source) = APP_DELAY_SOURCE.borrow(cs).borrow_mut().deref_mut() {
         res = imu_driver.init(delay_source);
+        if res.is_ok() {
+          res = imu_driver.enable_rotation_vector(IMU_REPORTING_INTERVAL_MS);
+        }
       }
     }
   });
@@ -209,14 +194,19 @@ extern "C" fn task_kicker(_arg: *mut cty::c_void) {
     d_println!(get_debug_log(), "bno080 OK");
     setup_repeated_imu_timer();
   }
+}
 
 
+/// Second-stage initialization callback
+#[no_mangle]
+extern "C" fn task_kicker(_arg: *mut cty::c_void) {
+  // initialize the IMU
+  setup_imu();
 }
 
 #[no_mangle]
 extern "C" fn repeated_blink_cb(_arg: *mut cty::c_void) {
   toggle_leds();
-  //d_print!(get_debug_log(), ".");
 }
 
 
@@ -244,11 +234,11 @@ pub fn setup_repeated_blink_timer() {
 }
 
 
-
-fn spin_driver() {
+/// Give some time to the IMU driver to process sensor reports
+fn spin_imu_driver() {
   interrupt::free(|cs| {
-    if let Some(ref mut i2c_driver) = I2C1_DRIVER.borrow(cs).borrow_mut().deref_mut() {
-      i2c_driver.handle_all_messages();
+    if let Some(ref mut imu_driver) = IMU_DRIVER.borrow(cs).borrow_mut().deref_mut() {
+      imu_driver.handle_all_messages();
     }
   });
 }
@@ -256,13 +246,12 @@ fn spin_driver() {
 
 #[no_mangle]
 extern "C" fn repeated_imu_cb(_arg: *mut cty::c_void) {
-  //d_print!(get_debug_log(), ".");
-  spin_driver();
+  spin_imu_driver();
 }
 
 
+/// Start a timer that will repeatedly spin the imu driver
 pub fn setup_repeated_imu_timer() {
-
   let tid = cmsis_rtos2::rtos_os_timer_new(
     Some(repeated_imu_cb),
     cmsis_rtos2::osTimerType_t_osTimerPeriodic,
@@ -285,6 +274,8 @@ pub fn setup_repeated_imu_timer() {
 
 }
 
+
+/// Start a task that will perform second-stage initialization
 pub fn setup_kicker_thread() {
   let tid = cmsis_rtos2::rtos_os_thread_new(
     Some(task_kicker),
@@ -341,43 +332,37 @@ fn setup_peripherals()  {
   let cp = cortex_m::Peripherals::take().unwrap();
 //  DWT.enable_cycle_counter();
 
-  let gpioc = dp.GPIOC.split();
-  let mut user_led1 = gpioc.pc13.into_push_pull_output();
-
-  // Set up the system clock at 16 MHz
+  // Set up the system clock
   let rcc = dp.RCC.constrain();
   let clocks = rcc.cfgr.freeze();
 //  let clocks = rcc.cfgr.sysclk(16.mhz()).freeze();
+  let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
+
+  let gpiob = dp.GPIOB.split();
+  let gpioc = dp.GPIOC.split();
+  let mut user_led1 = gpioc.pc13.into_push_pull_output();
 
   //set initial states of user LEDs
   user_led1.set_high().unwrap();
 
-
-  let gpiob = dp.GPIOB.split();
-
+  // setup i2c1 and imu driver
   let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
   let sda = gpiob.pb9.into_alternate_af4().internal_pull_up(true).set_open_drain();
   let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), clocks);
-  let  i2c1_driver = BNO080::new(imu_i2c_port);
-  let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
-
+  let imu_driver = BNO080::new(imu_i2c_port);
 
   //store shared peripherals
   interrupt::free(|cs| {
     APP_CLOCKS.borrow(cs).replace(Some(clocks));
     USER_LED_1.borrow(cs).replace(Some(user_led1));
-    I2C1_DRIVER.borrow(cs).replace(Some(i2c1_driver));
+    IMU_DRIVER.borrow(cs).replace(Some(imu_driver));
     APP_DELAY_SOURCE.borrow(cs).replace(Some(delay_source));
-//    APP_CORE_PERIPHS.borrow(cs).replace(Some(cp));
   });
-
-  //d_println!(get_debug_log(), "done!");
 
 }
 
 
 fn setup_rtos() {
-//  d_println!(get_debug_log(), "Setup RTOS...");
 
   let _rc = cmsis_rtos2::rtos_kernel_initialize();
 //  d_println!(get_debug_log(), "kernel_initialize rc: {}", _rc);
@@ -387,7 +372,6 @@ fn setup_rtos() {
 
   let _sys_timer_hz = cmsis_rtos2::rtos_kernel_get_sys_timer_freq_hz();
 //  d_println!(get_debug_log(), "sys_timer_hz : {}", _sys_timer_hz);
-
 
   setup_kicker_thread();
   setup_repeated_blink_timer();
@@ -408,10 +392,10 @@ fn main() -> ! {
   setup_rtos();
 
   loop {
-    //cmsis_rtos2::rtos_os_thread_yield();
+    //typically this is never called
+    d_println!(get_debug_log(),"mainloop");
     //one hz heartbeat
     cmsis_rtos2::rtos_os_delay(1000);
-    d_print!(get_debug_log(),".");
   }
 
 }
