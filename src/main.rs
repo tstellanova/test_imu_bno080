@@ -11,10 +11,13 @@ extern crate panic_semihosting;
 use core::cell::RefCell;
 use cortex_m::interrupt::{self, Mutex};
 
-//use stm32h7xx_hal as processor_hal;
-use stm32f4xx_hal as processor_hal;
-use processor_hal::prelude::*;
+#[cfg(feature = "stm32h7x")]
+use stm32h7xx_hal as processor_hal;
 
+#[cfg(feature = "stm32f4x")]
+use stm32f4xx_hal as processor_hal;
+
+use processor_hal::prelude::*;
 use processor_hal::stm32 as pac;
 use pac::I2C1;
 //use pac::DWT;
@@ -30,25 +33,33 @@ use processor_hal::hal::digital::v2::ToggleableOutputPin;
 
 use cmsis_rtos2;
 
+#[cfg(feature = "stm32f4x")]
 #[allow(non_upper_case_globals)]
 #[no_mangle]
-pub static SystemCoreClock: u32 = 16_000_000; //or use stm32f4xx_hal rcc::HSI
+//pub static SystemCoreClock: u32 =  16_000_000; //from stm32f4xx_hal::rcc::HSI
+ pub static SystemCoreClock: u32 =  25_000_000; //from stm32f4xx_hal::rcc::HSI
 //Can use 25_000_000 on an stm32f401 board with 25 MHz xtal
-// 48_000_000 for stm32h743 HSI (48 MHz)
+
+#[cfg(feature = "stm32h7x")]
+#[allow(non_upper_case_globals)]
+#[no_mangle]
+pub static SystemCoreClock: u32 = 48_000_000; //stm32h743 HSI (48 MHz)
 
 #[cfg(debug_assertions)]
 use cortex_m_log::{println};
 
 use cortex_m_log::{d_println};
+
 // FOR itm mode:
 //use cortex_m_log::{
 //  destination::Itm, printer::itm::InterruptSync as InterruptSyncItm,
 //};
-#[cfg(debug_assertions)]
-use cortex_m_log::printer::semihosting;
 
-#[cfg(debug_assertions)]
-use cortex_m_semihosting;
+//#[cfg(debug_assertions)]
+//use cortex_m_log::printer::semihosting;
+
+//#[cfg(debug_assertions)]
+//use cortex_m_semihosting;
 
 
 use processor_hal::rcc::Clocks;
@@ -65,16 +76,24 @@ use bno080::*;
 const IMU_REPORTING_RATE_HZ: u16 = 500;
 const IMU_REPORTING_INTERVAL_MS: u16 = (1000 / IMU_REPORTING_RATE_HZ) ;
 
-
 type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
   (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>,
    processor_hal::gpio::gpiob::PB9<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>)
 >>;
 
-#[cfg(debug_assertions)]
-type DebugLog = cortex_m_log::printer::semihosting::Semihosting<cortex_m_log::modes::InterruptFree, cortex_m_semihosting::hio::HStdout>;
 
+
+
+#[cfg(debug_assertions)]
+type DebugLog = cortex_m_log::printer::dummy::Dummy;
+//type DebugLog = cortex_m_log::printer::semihosting::Semihosting<cortex_m_log::modes::InterruptFree, cortex_m_semihosting::hio::HStdout>;
+
+#[cfg(feature = "stm32f4x")]
 type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
+
+#[cfg(feature = "stm32h7x")]
+type GpioTypeUserLed1 =  processor_hal::gpio::gpiob::PB0<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
+
 
 static APP_CLOCKS:  Mutex<RefCell< Option< Clocks >>> = Mutex::new(RefCell::new(None));
 static USER_LED_1:  Mutex<RefCell<Option< GpioTypeUserLed1>>> = Mutex::new(RefCell::new(None));
@@ -108,7 +127,8 @@ fn HardFault(_ef: &ExceptionFrame) -> ! {
 /// Used in debug builds to provide a logging outlet
 #[cfg(debug_assertions)]
 fn get_debug_log() -> DebugLog {
-  semihosting::InterruptFree::<_>::stdout().unwrap()
+  cortex_m_log::printer::Dummy::new()
+  //semihosting::InterruptFree::<_>::stdout().unwrap()
 }
 
 
@@ -200,6 +220,8 @@ fn setup_imu() {
 /// Second-stage initialization callback
 #[no_mangle]
 extern "C" fn task_kicker(_arg: *mut cty::c_void) {
+  // start the blinking task
+  setup_repeated_blink_timer();
   // initialize the IMU
   setup_imu();
 }
@@ -334,7 +356,12 @@ fn setup_peripherals()  {
 
   // Set up the system clock
   let rcc = dp.RCC.constrain();
+  #[cfg(feature = "stm32f4x")]
+  let clocks = rcc.cfgr.use_hse(SystemCoreClock.hz()).freeze();
+  #[cfg(not(feature = "stm32f4x"))]
+
   let clocks = rcc.cfgr.freeze();
+
 //  let clocks = rcc.cfgr.sysclk(16.mhz()).freeze();
   let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
@@ -374,7 +401,6 @@ fn setup_rtos() {
 //  d_println!(get_debug_log(), "sys_timer_hz : {}", _sys_timer_hz);
 
   setup_kicker_thread();
-  setup_repeated_blink_timer();
 
 //  setup_default_threads();
 
