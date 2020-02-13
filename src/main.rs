@@ -61,7 +61,7 @@ use processor_hal::rcc::RccExt;
 use core::ops::{DerefMut};
 
 use core::ptr::{null, null_mut};
-use cmsis_rtos2::{ osMessageQueueId_t};
+//use cmsis_rtos2::{ osMessageQueueId_t};
 use bno080::*;
 
 //const IMU_READ_PERIOD: u32 = 10_000;
@@ -78,12 +78,18 @@ type DebugLog = cortex_m_log::printer::semihosting::Semihosting<cortex_m_log::mo
 
 type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
 
+//type DelaySourceType = embedded_hal::blocking::delay::DelayMs<T: ?Sized>;
+
 static APP_CLOCKS:  Mutex<RefCell< Option< Clocks >>> = Mutex::new(RefCell::new(None));
 static USER_LED_1:  Mutex<RefCell<Option< GpioTypeUserLed1>>> = Mutex::new(RefCell::new(None));
 
+
+static APP_DELAY_SOURCE: Mutex<RefCell<Option<  processor_hal::delay::Delay >>> = Mutex::new(RefCell::new(None));
 static I2C1_DRIVER: Mutex<RefCell<Option< ImuDriverType>>> = Mutex::new(RefCell::new(None));
 
-static mut GLOBAL_QUEUE_HANDLE: Option< osMessageQueueId_t  > = None;
+
+
+//static mut GLOBAL_QUEUE_HANDLE: Option< osMessageQueueId_t  > = None;
 
 
 
@@ -127,21 +133,21 @@ fn toggle_leds() {
 
 
 
-#[no_mangle]
-extern "C" fn task_blink(_arg: *mut cty::c_void) {
-  let mq_id:osMessageQueueId_t = unsafe { GLOBAL_QUEUE_HANDLE.unwrap() } ;
-  let mut send_buf: [u8; 10] = [0; 10];
-  loop {
-    cmsis_rtos2::rtos_os_msg_queue_put(
-      mq_id as osMessageQueueId_t,
-      send_buf.as_ptr() as *const cty::c_void,
-      1,
-      250);
-
-    send_buf[0] = (send_buf[0] + 1) % 255;
-  }
-
-}
+//#[no_mangle]
+//extern "C" fn task_blink(_arg: *mut cty::c_void) {
+//  let mq_id:osMessageQueueId_t = unsafe { GLOBAL_QUEUE_HANDLE.unwrap() } ;
+//  let mut send_buf: [u8; 10] = [0; 10];
+//  loop {
+//    cmsis_rtos2::rtos_os_msg_queue_put(
+//      mq_id as osMessageQueueId_t,
+//      send_buf.as_ptr() as *const cty::c_void,
+//      1,
+//      250);
+//
+//    send_buf[0] = (send_buf[0] + 1) % 255;
+//  }
+//
+//}
 
 //#[no_mangle]
 //extern "C" fn task1_cb(_arg: *mut cty::c_void) {
@@ -159,21 +165,51 @@ extern "C" fn task_blink(_arg: *mut cty::c_void) {
 //
 //}
 
+//#[no_mangle]
+//extern "C" fn task2_cb(_arg: *mut cty::c_void) {
+//  let mq_id:osMessageQueueId_t = unsafe { GLOBAL_QUEUE_HANDLE.unwrap() } ;
+//  let mut recv_buf: [u8; 10] = [0; 10];
+//
+//  loop {
+//    let rc = cmsis_rtos2::rtos_os_msg_queue_get(mq_id,
+//                                                recv_buf.as_mut_ptr() as *mut cty::c_void,
+//                                                null_mut(), 100);
+//    if 0 == rc {
+//      toggle_leds();
+//      cmsis_rtos2::rtos_os_delay(50);
+//    }
+//
+//  }
+//
+//}
+
+
+
+
+//if let Some(ref mut delay_source) = APP_DELAY_SOURCE.borrow(cs).borrow_mut().deref_mut()  {
+//imu_driver.init(delay_source)
+//}
+
 #[no_mangle]
-extern "C" fn task2_cb(_arg: *mut cty::c_void) {
-  let mq_id:osMessageQueueId_t = unsafe { GLOBAL_QUEUE_HANDLE.unwrap() } ;
-  let mut recv_buf: [u8; 10] = [0; 10];
+extern "C" fn task_kicker(_arg: *mut cty::c_void) {
 
-  loop {
-    let rc = cmsis_rtos2::rtos_os_msg_queue_get(mq_id,
-                                                recv_buf.as_mut_ptr() as *mut cty::c_void,
-                                                null_mut(), 100);
-    if 0 == rc {
-      toggle_leds();
-      cmsis_rtos2::rtos_os_delay(50);
+  let mut res = Ok(());
+  interrupt::free(|cs| {
+    if let Some(ref mut imu_driver) = I2C1_DRIVER.borrow(cs).borrow_mut().deref_mut() {
+      if let Some(delay_source) = APP_DELAY_SOURCE.borrow(cs).borrow_mut().deref_mut() {
+        res = imu_driver.init(delay_source);
+      }
     }
+  });
 
+  if res.is_err() {
+    d_println!(get_debug_log(), "bno080 init err {:?}", res);
   }
+  else {
+    d_println!(get_debug_log(), "bno080 OK");
+    setup_repeated_imu_timer();
+  }
+
 
 }
 
@@ -227,9 +263,6 @@ extern "C" fn repeated_imu_cb(_arg: *mut cty::c_void) {
 
 pub fn setup_repeated_imu_timer() {
 
-
-
-
   let tid = cmsis_rtos2::rtos_os_timer_new(
     Some(repeated_imu_cb),
     cmsis_rtos2::osTimerType_t_osTimerPeriodic,
@@ -252,41 +285,53 @@ pub fn setup_repeated_imu_timer() {
 
 }
 
-pub fn setup_default_threads() {
-
-// create a shared msg queue
-  let mq = cmsis_rtos2::rtos_os_msg_queue_new(10, 4, null());
-  if mq.is_null() {
-   d_println!(get_debug_log(), "rtos_os_msg_queue_new failed");
-   return;
-  }
-
-  unsafe {
-   GLOBAL_QUEUE_HANDLE = Some(mq);
-  }
-
-  // We don't pass context to the default task here, since that involves problematic
-  // casting to/from C void pointers; instead, we use global static context.
-  let thread1_id = cmsis_rtos2::rtos_os_thread_new(
-    Some(task_blink),
+pub fn setup_kicker_thread() {
+  let tid = cmsis_rtos2::rtos_os_thread_new(
+    Some(task_kicker),
     null_mut(),
     null(),
   );
-  if thread1_id.is_null() {
-    d_println!(get_debug_log(), "rtos_os_thread_new failed!");
-    return;
-  }
-
-  let thread2_id = cmsis_rtos2::rtos_os_thread_new(
-    Some(task2_cb),
-    null_mut(),
-    null(),
-  );
-  if thread2_id.is_null() {
+  if tid.is_null() {
     d_println!(get_debug_log(), "rtos_os_thread_new failed!");
     return;
   }
 }
+
+//pub fn setup_ping_pong_tasks() {
+//
+//// create a shared msg queue
+//  let mq = cmsis_rtos2::rtos_os_msg_queue_new(10, 4, null());
+//  if mq.is_null() {
+//   d_println!(get_debug_log(), "rtos_os_msg_queue_new failed");
+//   return;
+//  }
+//
+//  unsafe {
+//   GLOBAL_QUEUE_HANDLE = Some(mq);
+//  }
+//
+//  // We don't pass context to the default task here, since that involves problematic
+//  // casting to/from C void pointers; instead, we use global static context.
+//  let thread1_id = cmsis_rtos2::rtos_os_thread_new(
+//    Some(task_blink),
+//    null_mut(),
+//    null(),
+//  );
+//  if thread1_id.is_null() {
+//    d_println!(get_debug_log(), "rtos_os_thread_new failed!");
+//    return;
+//  }
+//
+//  let thread2_id = cmsis_rtos2::rtos_os_thread_new(
+//    Some(task2_cb),
+//    null_mut(),
+//    null(),
+//  );
+//  if thread2_id.is_null() {
+//    d_println!(get_debug_log(), "rtos_os_thread_new failed!");
+//    return;
+//  }
+//}
 
 // Setup peripherals such as GPIO
 fn setup_peripherals()  {
@@ -308,21 +353,13 @@ fn setup_peripherals()  {
   user_led1.set_high().unwrap();
 
 
-  let mut delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
-
   let gpiob = dp.GPIOB.split();
 
   let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
   let sda = gpiob.pb9.into_alternate_af4().internal_pull_up(true).set_open_drain();
   let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), clocks);
-  let mut i2c1_driver = BNO080::new(imu_i2c_port);
-  let res = i2c1_driver.init(&mut delay_source);
-  if res.is_err() {
-    d_println!(get_debug_log(), "bno080 init err {:?}", res);
-  }
-  else {
-    d_println!(get_debug_log(), "bno080 OK");
-  }
+  let  i2c1_driver = BNO080::new(imu_i2c_port);
+  let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
 
   //store shared peripherals
@@ -330,6 +367,8 @@ fn setup_peripherals()  {
     APP_CLOCKS.borrow(cs).replace(Some(clocks));
     USER_LED_1.borrow(cs).replace(Some(user_led1));
     I2C1_DRIVER.borrow(cs).replace(Some(i2c1_driver));
+    APP_DELAY_SOURCE.borrow(cs).replace(Some(delay_source));
+//    APP_CORE_PERIPHS.borrow(cs).replace(Some(cp));
   });
 
   //d_println!(get_debug_log(), "done!");
@@ -350,7 +389,7 @@ fn setup_rtos() {
 //  d_println!(get_debug_log(), "sys_timer_hz : {}", _sys_timer_hz);
 
 
-  setup_repeated_imu_timer();
+  setup_kicker_thread();
   setup_repeated_blink_timer();
 
 //  setup_default_threads();
