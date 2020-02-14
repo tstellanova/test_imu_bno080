@@ -3,9 +3,9 @@
 #![no_main]
 #![no_std]
 
-//extern crate panic_itm;
-
-extern crate panic_semihosting;
+extern crate panic_halt;
+// extern crate panic_itm;
+//extern crate panic_semihosting;
 
 
 use core::cell::RefCell;
@@ -28,6 +28,7 @@ extern crate cortex_m_rt;
 
 use cortex_m_rt::{entry, ExceptionFrame};
 
+use processor_hal::hal::digital::v2::OutputPin;
 use processor_hal::hal::digital::v2::ToggleableOutputPin;
 
 
@@ -61,8 +62,8 @@ use cortex_m_log::{d_println};
 //#[cfg(debug_assertions)]
 //use cortex_m_semihosting;
 
-
-use processor_hal::rcc::Clocks;
+// #[cfg(feature = "stm32f4x")]
+// use processor_hal::rcc::Clocks;
 
 use processor_hal::gpio::GpioExt;
 use processor_hal::rcc::RccExt;
@@ -95,7 +96,6 @@ type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::O
 type GpioTypeUserLed1 =  processor_hal::gpio::gpiob::PB0<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
 
 
-static APP_CLOCKS:  Mutex<RefCell< Option< Clocks >>> = Mutex::new(RefCell::new(None));
 static USER_LED_1:  Mutex<RefCell<Option< GpioTypeUserLed1>>> = Mutex::new(RefCell::new(None));
 
 static APP_DELAY_SOURCE: Mutex<RefCell<Option<  processor_hal::delay::Delay >>> = Mutex::new(RefCell::new(None));
@@ -218,13 +218,13 @@ fn setup_imu() {
 
 
 /// Second-stage initialization callback
-#[no_mangle]
-extern "C" fn task_kicker(_arg: *mut cty::c_void) {
-  // start the blinking task
-  setup_repeated_blink_timer();
-  // initialize the IMU
-  setup_imu();
-}
+// #[no_mangle]
+// extern "C" fn task_kicker(_arg: *mut cty::c_void) {
+//   // start the blinking task
+//   setup_repeated_blink_timer();
+//   // initialize the IMU
+//   setup_imu();
+// }
 
 #[no_mangle]
 extern "C" fn repeated_blink_cb(_arg: *mut cty::c_void) {
@@ -298,17 +298,17 @@ pub fn setup_repeated_imu_timer() {
 
 
 /// Start a task that will perform second-stage initialization
-pub fn setup_kicker_thread() {
-  let tid = cmsis_rtos2::rtos_os_thread_new(
-    Some(task_kicker),
-    null_mut(),
-    null(),
-  );
-  if tid.is_null() {
-    d_println!(get_debug_log(), "rtos_os_thread_new failed!");
-    return;
-  }
-}
+// pub fn setup_kicker_thread() {
+//   let tid = cmsis_rtos2::rtos_os_thread_new(
+//     Some(task_kicker),
+//     null_mut(),
+//     null(),
+//   );
+//   if tid.is_null() {
+//     d_println!(get_debug_log(), "rtos_os_thread_new failed!");
+//     return;
+//   }
+// }
 
 //pub fn setup_ping_pong_tasks() {
 //
@@ -346,31 +346,24 @@ pub fn setup_kicker_thread() {
 //  }
 //}
 
-// Setup peripherals such as GPIO
-fn setup_peripherals()  {
-  //d_print!(get_debug_log(), "setup_peripherals...");
-
+#[cfg(feature = "stm32f4x")]
+fn setup_peripherals_f4x()  {
   let dp = pac::Peripherals::take().unwrap();
   let cp = cortex_m::Peripherals::take().unwrap();
-//  DWT.enable_cycle_counter();
 
   // Set up the system clock
   let rcc = dp.RCC.constrain();
-  #[cfg(feature = "stm32f4x")]
   let clocks = rcc.cfgr.use_hse(SystemCoreClock.hz()).freeze();
-  #[cfg(not(feature = "stm32f4x"))]
-
-  let clocks = rcc.cfgr.freeze();
-
-//  let clocks = rcc.cfgr.sysclk(16.mhz()).freeze();
+  // or:      let clocks = rcc.cfgr.freeze();  // for HSI
   let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
   let gpiob = dp.GPIOB.split();
   let gpioc = dp.GPIOC.split();
-  let mut user_led1 = gpioc.pc13.into_push_pull_output();
 
+  let mut user_led1 = gpioc.pc13.into_push_pull_output();
   //set initial states of user LEDs
   user_led1.set_high().unwrap();
+
 
   // setup i2c1 and imu driver
   let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
@@ -380,7 +373,6 @@ fn setup_peripherals()  {
 
   //store shared peripherals
   interrupt::free(|cs| {
-    APP_CLOCKS.borrow(cs).replace(Some(clocks));
     USER_LED_1.borrow(cs).replace(Some(user_led1));
     IMU_DRIVER.borrow(cs).replace(Some(imu_driver));
     APP_DELAY_SOURCE.borrow(cs).replace(Some(delay_source));
@@ -388,7 +380,55 @@ fn setup_peripherals()  {
 
 }
 
+#[cfg(feature = "stm32h7x")]
+fn setup_peripherals_h7x()  {
+  let dp = pac::Peripherals::take().unwrap();
+  let cp = cortex_m::Peripherals::take().unwrap();
 
+  // Set up the system clock
+  let rcc = dp.RCC.constrain();
+
+  let pwr = dp.PWR.constrain();
+  let vos = pwr.freeze();
+
+  //use the existing sysclk
+  let mut ccdr = rcc.freeze(vos, &dp.SYSCFG);
+  let clocks = ccdr.clocks;
+  let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
+
+  let gpiob = dp.GPIOB.split(&mut ccdr.ahb4);
+
+  let mut user_led1 = gpiob.pb0.into_push_pull_output();
+  //set initial states of user LEDs
+  user_led1.set_high().unwrap();
+
+  // setup i2c1 and imu driver
+  let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
+  let sda = gpiob.pb9.into_alternate_af4().internal_pull_up(true).set_open_drain();
+  let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), &ccdr);
+  let imu_driver = BNO080::new(imu_i2c_port);
+
+  //store shared peripherals
+  interrupt::free(|cs| {
+    USER_LED_1.borrow(cs).replace(Some(user_led1));
+    IMU_DRIVER.borrow(cs).replace(Some(imu_driver));
+    APP_DELAY_SOURCE.borrow(cs).replace(Some(delay_source));
+  });
+
+}
+
+/// Setup peripherals such as GPIO
+fn setup_peripherals()  {
+
+  #[cfg(feature = "stm32f4x")]
+  setup_peripherals_f4x();
+
+  #[cfg(feature = "stm32h7x")]
+  setup_peripherals_h7x();
+
+}
+
+/// Configure and start the RTOS
 fn setup_rtos() {
 
   let _rc = cmsis_rtos2::rtos_kernel_initialize();
@@ -400,7 +440,8 @@ fn setup_rtos() {
   let _sys_timer_hz = cmsis_rtos2::rtos_kernel_get_sys_timer_freq_hz();
 //  d_println!(get_debug_log(), "sys_timer_hz : {}", _sys_timer_hz);
 
-  setup_kicker_thread();
+
+  // setup_kicker_thread();
 
 //  setup_default_threads();
 
@@ -415,11 +456,17 @@ fn setup_rtos() {
 fn main() -> ! {
 
   setup_peripherals();
+
+  // start the blinking task
+  setup_repeated_blink_timer();
+  // initialize the IMU
+  setup_imu();
+
   setup_rtos();
 
   loop {
     //typically this is never called
-    d_println!(get_debug_log(),"mainloop");
+    //d_println!(get_debug_log(),"mainloop");
     //one hz heartbeat
     cmsis_rtos2::rtos_os_delay(1000);
   }
