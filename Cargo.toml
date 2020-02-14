@@ -38,7 +38,7 @@ stm32f4xx-hal = { version =" 0.6.0", features = ["stm32f401", "rt"] , optional=t
 
 [features]
 # no features by default
-default = ["stm32f4x"]
+default = ["stm32h7x"]
 stm32f4x = [ "stm32f4", "stm32f4xx-hal"]
 stm32h7x = ["stm32h7", "stm32h7xx-hal"]
 

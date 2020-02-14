@@ -37,9 +37,8 @@ use cmsis_rtos2;
 #[cfg(feature = "stm32f4x")]
 #[allow(non_upper_case_globals)]
 #[no_mangle]
-//pub static SystemCoreClock: u32 =  16_000_000; //from stm32f4xx_hal::rcc::HSI
- pub static SystemCoreClock: u32 =  25_000_000; //from stm32f4xx_hal::rcc::HSI
-//Can use 25_000_000 on an stm32f401 board with 25 MHz xtal
+pub static SystemCoreClock: u32 =  16_000_000; //same as stm32f4xx_hal::rcc::HSI
+//  pub static SystemCoreClock: u32 =  25_000_000; // eg stm32f401 board with 25 MHz xtal
 
 #[cfg(feature = "stm32h7x")]
 #[allow(non_upper_case_globals)]
@@ -74,7 +73,10 @@ use core::ptr::{null, null_mut};
 //use cmsis_rtos2::{ osMessageQueueId_t};
 use bno080::*;
 
+const SYSCLOCK_TICK_RATE_HZ: u16 = 1000;
+const HEARTBEAT_BLINK_RATE_HZ: u16 =  1;
 const IMU_REPORTING_RATE_HZ: u16 = 500;
+const IMU_REPORTING_INTERVAL_TICKS: u16 = (SYSCLOCK_TICK_RATE_HZ / IMU_REPORTING_RATE_HZ) ;
 const IMU_REPORTING_INTERVAL_MS: u16 = (1000 / IMU_REPORTING_RATE_HZ) ;
 
 type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
@@ -101,8 +103,6 @@ static USER_LED_1:  Mutex<RefCell<Option< GpioTypeUserLed1>>> = Mutex::new(RefCe
 static APP_DELAY_SOURCE: Mutex<RefCell<Option<  processor_hal::delay::Delay >>> = Mutex::new(RefCell::new(None));
 static IMU_DRIVER: Mutex<RefCell<Option< ImuDriverType>>> = Mutex::new(RefCell::new(None));
 
-
-//static mut GLOBAL_QUEUE_HANDLE: Option< osMessageQueueId_t  > = None;
 
 
 
@@ -141,59 +141,7 @@ fn toggle_leds() {
   });
 }
 
-
-//#[no_mangle]
-//extern "C" fn task_blink(_arg: *mut cty::c_void) {
-//  let mq_id:osMessageQueueId_t = unsafe { GLOBAL_QUEUE_HANDLE.unwrap() } ;
-//  let mut send_buf: [u8; 10] = [0; 10];
-//  loop {
-//    cmsis_rtos2::rtos_os_msg_queue_put(
-//      mq_id as osMessageQueueId_t,
-//      send_buf.as_ptr() as *const cty::c_void,
-//      1,
-//      250);
-//
-//    send_buf[0] = (send_buf[0] + 1) % 255;
-//  }
-//
-//}
-
-//#[no_mangle]
-//extern "C" fn task1_cb(_arg: *mut cty::c_void) {
-//  let mq_id:osMessageQueueId_t = unsafe { GLOBAL_QUEUE_HANDLE.unwrap() } ;
-//  let mut send_buf: [u8; 10] = [0; 10];
-//  loop {
-//    cmsis_rtos2::rtos_os_msg_queue_put(
-//      mq_id as osMessageQueueId_t,
-//      send_buf.as_ptr() as *const cty::c_void,
-//      1,
-//      250);
-//
-//    send_buf[0] = (send_buf[0] + 1) % 255;
-//  }
-//
-//}
-
-//#[no_mangle]
-//extern "C" fn task2_cb(_arg: *mut cty::c_void) {
-//  let mq_id:osMessageQueueId_t = unsafe { GLOBAL_QUEUE_HANDLE.unwrap() } ;
-//  let mut recv_buf: [u8; 10] = [0; 10];
-//
-//  loop {
-//    let rc = cmsis_rtos2::rtos_os_msg_queue_get(mq_id,
-//                                                recv_buf.as_mut_ptr() as *mut cty::c_void,
-//                                                null_mut(), 100);
-//    if 0 == rc {
-//      toggle_leds();
-//      cmsis_rtos2::rtos_os_delay(50);
-//    }
-//
-//  }
-//
-//}
-
-
-fn setup_imu() {
+pub fn setup_imu() {
   // initialize the IMU
   let mut res = Ok(());
   interrupt::free(|cs| {
@@ -217,15 +165,6 @@ fn setup_imu() {
 }
 
 
-/// Second-stage initialization callback
-// #[no_mangle]
-// extern "C" fn task_kicker(_arg: *mut cty::c_void) {
-//   // start the blinking task
-//   setup_repeated_blink_timer();
-//   // initialize the IMU
-//   setup_imu();
-// }
-
 #[no_mangle]
 extern "C" fn repeated_blink_cb(_arg: *mut cty::c_void) {
   toggle_leds();
@@ -244,7 +183,9 @@ pub fn setup_repeated_blink_timer() {
     d_println!(get_debug_log(), "setup_repeating_timer failed...");
   }
   else {
-    let rc = cmsis_rtos2::rtos_os_timer_start(tid, 50);
+    let tick_hz:u16 = cmsis_rtos2::rtos_kernel_get_tick_freq_hz() as u16;
+    let tick_interval = (tick_hz / HEARTBEAT_BLINK_RATE_HZ) as u32;
+    let rc = cmsis_rtos2::rtos_os_timer_start(tid, tick_interval);
     if 0 != rc {
       d_println!(get_debug_log(), "rtos_os_timer_start failed {:?}", rc);
     }
@@ -257,12 +198,15 @@ pub fn setup_repeated_blink_timer() {
 
 
 /// Give some time to the IMU driver to process sensor reports
-fn spin_imu_driver() {
+pub fn spin_imu_driver() {
+  let mut msg_count = 0;
   interrupt::free(|cs| {
     if let Some(ref mut imu_driver) = IMU_DRIVER.borrow(cs).borrow_mut().deref_mut() {
-      imu_driver.handle_all_messages();
+      msg_count = imu_driver.handle_all_messages();
     }
   });
+
+  d_println!(get_debug_log(), "count: {}", msg_count);
 }
 
 
@@ -285,66 +229,21 @@ pub fn setup_repeated_imu_timer() {
     d_println!(get_debug_log(), "setup_repeated_imu_timer failed...");
   }
   else {
-    let rc = cmsis_rtos2::rtos_os_timer_start(tid, 50);
+    let tick_hz:u16 = cmsis_rtos2::rtos_kernel_get_tick_freq_hz() as u16;
+    let tick_interval = (tick_hz / IMU_REPORTING_RATE_HZ) as u32;
+    if tick_interval != (IMU_REPORTING_INTERVAL_TICKS as u32) {
+      d_println!(get_debug_log(), "unexpected tick rate {} vs {}", tick_interval, IMU_REPORTING_INTERVAL_TICKS);
+    }
+    let rc = cmsis_rtos2::rtos_os_timer_start(tid, tick_interval );
+
     if 0 != rc {
-      d_println!(get_debug_log(), "rtos_os_timer_start failed {:?}", rc);
+      d_println!(get_debug_log(), "rtos_os_timer_start {} failed {:?}", tick_interval, rc);
     }
-    else {
-      d_println!(get_debug_log(),"imu timer: {:?}", tid);
-    }
+
   }
 
 }
 
-
-/// Start a task that will perform second-stage initialization
-// pub fn setup_kicker_thread() {
-//   let tid = cmsis_rtos2::rtos_os_thread_new(
-//     Some(task_kicker),
-//     null_mut(),
-//     null(),
-//   );
-//   if tid.is_null() {
-//     d_println!(get_debug_log(), "rtos_os_thread_new failed!");
-//     return;
-//   }
-// }
-
-//pub fn setup_ping_pong_tasks() {
-//
-//// create a shared msg queue
-//  let mq = cmsis_rtos2::rtos_os_msg_queue_new(10, 4, null());
-//  if mq.is_null() {
-//   d_println!(get_debug_log(), "rtos_os_msg_queue_new failed");
-//   return;
-//  }
-//
-//  unsafe {
-//   GLOBAL_QUEUE_HANDLE = Some(mq);
-//  }
-//
-//  // We don't pass context to the default task here, since that involves problematic
-//  // casting to/from C void pointers; instead, we use global static context.
-//  let thread1_id = cmsis_rtos2::rtos_os_thread_new(
-//    Some(task_blink),
-//    null_mut(),
-//    null(),
-//  );
-//  if thread1_id.is_null() {
-//    d_println!(get_debug_log(), "rtos_os_thread_new failed!");
-//    return;
-//  }
-//
-//  let thread2_id = cmsis_rtos2::rtos_os_thread_new(
-//    Some(task2_cb),
-//    null_mut(),
-//    null(),
-//  );
-//  if thread2_id.is_null() {
-//    d_println!(get_debug_log(), "rtos_os_thread_new failed!");
-//    return;
-//  }
-//}
 
 #[cfg(feature = "stm32f4x")]
 fn setup_peripherals_f4x()  {
@@ -353,7 +252,7 @@ fn setup_peripherals_f4x()  {
 
   // Set up the system clock
   let rcc = dp.RCC.constrain();
-  let clocks = rcc.cfgr.use_hse(SystemCoreClock.hz()).freeze();
+  let clocks = rcc.cfgr.freeze(); //use_hse(SystemCoreClock.hz()).freeze();
   // or:      let clocks = rcc.cfgr.freeze();  // for HSI
   let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
@@ -429,40 +328,38 @@ fn setup_peripherals()  {
 }
 
 /// Configure and start the RTOS
-fn setup_rtos() {
+fn configure_rtos() {
 
   let _rc = cmsis_rtos2::rtos_kernel_initialize();
-//  d_println!(get_debug_log(), "kernel_initialize rc: {}", _rc);
+  d_println!(get_debug_log(), "kernel_initialize rc: {}", _rc);
 
   let _tick_hz = cmsis_rtos2::rtos_kernel_get_tick_freq_hz();
-//  d_println!(get_debug_log(), "tick_hz : {}", _tick_hz);
+  d_println!(get_debug_log(), "tick_hz : {}", _tick_hz);
 
   let _sys_timer_hz = cmsis_rtos2::rtos_kernel_get_sys_timer_freq_hz();
-//  d_println!(get_debug_log(), "sys_timer_hz : {}", _sys_timer_hz);
+  d_println!(get_debug_log(), "sys_timer_hz : {}", _sys_timer_hz);
 
+}
 
-  // setup_kicker_thread();
-
-//  setup_default_threads();
-
+fn start_rtos() {
   let _rc = cmsis_rtos2::rtos_kernel_start();
   d_println!(get_debug_log(), "kernel_start rc: {}", _rc);
 
   //d_println!(get_debug_log(),"RTOS done!");
-
 }
 
 #[entry]
 fn main() -> ! {
 
   setup_peripherals();
+  configure_rtos();
 
   // start the blinking task
   setup_repeated_blink_timer();
   // initialize the IMU
   setup_imu();
 
-  setup_rtos();
+  start_rtos();
 
   loop {
     //typically this is never called
