@@ -32,18 +32,8 @@ use processor_hal::hal::digital::v2::OutputPin;
 use processor_hal::hal::digital::v2::ToggleableOutputPin;
 
 
-use cmsis_rtos2;
+use cmsis_rtos2;//::{osThreadAttr_t, osPriority_t_osPriorityNormal};
 
-#[cfg(feature = "stm32f4x")]
-#[allow(non_upper_case_globals)]
-#[no_mangle]
-pub static SystemCoreClock: u32 =  16_000_000; //same as stm32f4xx_hal::rcc::HSI
-//  pub static SystemCoreClock: u32 =  25_000_000; // eg stm32f401 board with 25 MHz xtal
-
-#[cfg(feature = "stm32h7x")]
-#[allow(non_upper_case_globals)]
-#[no_mangle]
-pub static SystemCoreClock: u32 = 48_000_000; //stm32h743 HSI (48 MHz)
 
 #[cfg(debug_assertions)]
 use cortex_m_log::{println};
@@ -51,6 +41,7 @@ use cortex_m_log::{println};
 use cortex_m_log::{d_println};
 
 // FOR itm mode:
+//#[cfg(debug_assertions)]
 //use cortex_m_log::{
 //  destination::Itm, printer::itm::InterruptSync as InterruptSyncItm,
 //};
@@ -61,8 +52,6 @@ use cortex_m_log::{d_println};
 //#[cfg(debug_assertions)]
 //use cortex_m_semihosting;
 
-// #[cfg(feature = "stm32f4x")]
-// use processor_hal::rcc::Clocks;
 
 use processor_hal::gpio::GpioExt;
 use processor_hal::rcc::RccExt;
@@ -70,20 +59,30 @@ use processor_hal::rcc::RccExt;
 use core::ops::{DerefMut};
 
 use core::ptr::{null, null_mut};
-//use cmsis_rtos2::{ osMessageQueueId_t};
 use bno080::*;
 
-const SYSCLOCK_TICK_RATE_HZ: u16 = 1000;
+ const SYSCLOCK_TICK_RATE_HZ: u16 = 1000;
 const HEARTBEAT_BLINK_RATE_HZ: u16 =  1;
-const IMU_REPORTING_RATE_HZ: u16 = 500;
+const IMU_REPORTING_RATE_HZ: u16 = 100;
 const IMU_REPORTING_INTERVAL_TICKS: u16 = (SYSCLOCK_TICK_RATE_HZ / IMU_REPORTING_RATE_HZ) ;
 const IMU_REPORTING_INTERVAL_MS: u16 = (1000 / IMU_REPORTING_RATE_HZ) ;
+
+#[cfg(feature = "stm32f4x")]
+#[allow(non_upper_case_globals)]
+#[no_mangle]
+pub static SystemCoreClock: u32 =  16_000_000; //same as stm32f4xx_hal::rcc::HSI
+// pub static SystemCoreClock: u32 =  25_000_000; // eg stm32f401 board with 25 MHz xtal
+
+#[cfg(feature = "stm32h7x")]
+#[allow(non_upper_case_globals)]
+#[no_mangle]
+pub static SystemCoreClock: u32 = 48_000_000; //stm32h743 HSI (48 MHz)
+
 
 type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
   (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>,
    processor_hal::gpio::gpiob::PB9<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>)
 >>;
-
 
 
 
@@ -99,11 +98,10 @@ type GpioTypeUserLed1 =  processor_hal::gpio::gpiob::PB0<processor_hal::gpio::Ou
 
 
 static USER_LED_1:  Mutex<RefCell<Option< GpioTypeUserLed1>>> = Mutex::new(RefCell::new(None));
-
 static APP_DELAY_SOURCE: Mutex<RefCell<Option<  processor_hal::delay::Delay >>> = Mutex::new(RefCell::new(None));
 static IMU_DRIVER: Mutex<RefCell<Option< ImuDriverType>>> = Mutex::new(RefCell::new(None));
 
-
+//static APP_ITM: Mutex<RefCell<Option< cortex_m::peripheral::ITM >>> = Mutex::new(RefCell::new(None));
 
 
 
@@ -117,9 +115,43 @@ fn DefaultHandler(_irqn: i16) {
 
 // cortex-m-rt calls this for serious faults.  can set a breakpoint to debug
 #[exception]
-fn HardFault(_ef: &ExceptionFrame) -> ! {
-  loop {
+fn HardFault(ef: &ExceptionFrame) -> ! {
+  d_println!(get_debug_log(),  "HardFault: {:?}", ef);
+  loop { }
+}
 
+#[exception]
+unsafe fn MemoryManagement() -> ! {
+  d_println!(get_debug_log(),  "MemoryManagement");
+  loop { }
+}
+
+#[exception]
+unsafe fn BusFault() -> ! {
+  d_println!(get_debug_log(),  "BusFault");
+  loop { }
+}
+
+#[exception]
+unsafe fn UsageFault() -> ! {
+  d_println!(get_debug_log(),  "UsageFault");
+  loop { }
+}
+
+//#[exception]
+//unsafe fn PendSV() -> ! {
+//  d_println!(get_debug_log(),  "PendSV");
+//  loop { }
+//}
+
+
+
+/// Called by rtos on assert failures
+#[no_mangle]
+extern "C" fn handle_assert_failed() -> ! {
+  loop {
+    cortex_m::asm::nop();
+    cortex_m::asm::bkpt();
   }
 }
 
@@ -129,6 +161,7 @@ fn HardFault(_ef: &ExceptionFrame) -> ! {
 fn get_debug_log() -> DebugLog {
   cortex_m_log::printer::Dummy::new()
   //semihosting::InterruptFree::<_>::stdout().unwrap()
+
 }
 
 
@@ -160,89 +193,96 @@ pub fn setup_imu() {
   }
   else {
     d_println!(get_debug_log(), "bno080 OK");
-    setup_repeated_imu_timer();
+    setup_imu_task();
   }
 }
+
+
 
 
 #[no_mangle]
-extern "C" fn repeated_blink_cb(_arg: *mut cty::c_void) {
-  toggle_leds();
+extern "C" fn task_blink(_arg: *mut cty::c_void) {
+  let tick_hz:u16 = cmsis_rtos2::rtos_kernel_get_tick_freq_hz() as u16;
+  let tick_interval = (tick_hz / HEARTBEAT_BLINK_RATE_HZ) as u32;
+
+  loop {
+    toggle_leds();
+    cmsis_rtos2::rtos_os_delay(tick_interval);
+  }
 }
 
-
-pub fn setup_repeated_blink_timer() {
-  let tid = cmsis_rtos2::rtos_os_timer_new(
-    Some(repeated_blink_cb),
-    cmsis_rtos2::osTimerType_t_osTimerPeriodic,
+pub fn setup_blink_task() {
+  let tid = cmsis_rtos2::rtos_os_thread_new(
+    Some(task_blink),
     null_mut(),
     null(),
   );
-
   if tid.is_null() {
-    d_println!(get_debug_log(), "setup_repeating_timer failed...");
+    d_println!(get_debug_log(), "setup_blink_task failed!");
   }
-  else {
-    let tick_hz:u16 = cmsis_rtos2::rtos_kernel_get_tick_freq_hz() as u16;
-    let tick_interval = (tick_hz / HEARTBEAT_BLINK_RATE_HZ) as u32;
-    let rc = cmsis_rtos2::rtos_os_timer_start(tid, tick_interval);
-    if 0 != rc {
-      d_println!(get_debug_log(), "rtos_os_timer_start failed {:?}", rc);
-    }
-    else {
-      d_println!(get_debug_log(),"blink timer: {:?}", tid);
-    }
-  }
-
 }
 
 
 /// Give some time to the IMU driver to process sensor reports
-pub fn spin_imu_driver() {
-  let mut msg_count = 0;
-  interrupt::free(|cs| {
-    if let Some(ref mut imu_driver) = IMU_DRIVER.borrow(cs).borrow_mut().deref_mut() {
-      msg_count = imu_driver.handle_all_messages();
-    }
-  });
+pub fn spin_imu_driver() -> ! {
 
-  d_println!(get_debug_log(), "count: {}", msg_count);
+  let tick_hz:u16 = cmsis_rtos2::rtos_kernel_get_tick_freq_hz() as u16;
+  let tick_interval = (tick_hz / IMU_REPORTING_RATE_HZ ) as u32;
+  if tick_interval != (IMU_REPORTING_INTERVAL_TICKS as u32) {
+    d_println!(get_debug_log(), "unexpected tick rate {} vs {}", tick_interval, IMU_REPORTING_INTERVAL_TICKS);
+  }
+
+  loop {
+    let mut msg_count = 0;
+    interrupt::free(|cs| {
+      if let Some(ref mut imu_driver) = IMU_DRIVER.borrow(cs).borrow_mut().deref_mut() {
+        msg_count = imu_driver.get_received_packet_count();
+        //msg_count = imu_driver.handle_all_messages();
+      }
+    });
+    if msg_count < 1 {
+      cmsis_rtos2::rtos_os_delay(tick_interval);
+    }
+  }
+
 }
 
 
+/// RTOS callback for starting the imu task
 #[no_mangle]
-extern "C" fn repeated_imu_cb(_arg: *mut cty::c_void) {
+extern "C" fn task_imu_driver(_arg: *mut cty::c_void) {
   spin_imu_driver();
 }
 
 
-/// Start a timer that will repeatedly spin the imu driver
-pub fn setup_repeated_imu_timer() {
-  let tid = cmsis_rtos2::rtos_os_timer_new(
-    Some(repeated_imu_cb),
-    cmsis_rtos2::osTimerType_t_osTimerPeriodic,
-    null_mut(),
-    null(),
-  );
+pub fn setup_imu_task() {
 
-  if tid.is_null() {
-    d_println!(get_debug_log(), "setup_repeated_imu_timer failed...");
-  }
-  else {
-    let tick_hz:u16 = cmsis_rtos2::rtos_kernel_get_tick_freq_hz() as u16;
-    let tick_interval = (tick_hz / IMU_REPORTING_RATE_HZ) as u32;
-    if tick_interval != (IMU_REPORTING_INTERVAL_TICKS as u32) {
-      d_println!(get_debug_log(), "unexpected tick rate {} vs {}", tick_interval, IMU_REPORTING_INTERVAL_TICKS);
-    }
-    let rc = cmsis_rtos2::rtos_os_timer_start(tid, tick_interval );
+//  let task_attr = osThreadAttr_t {
+//    name: "imu\0".as_ptr() ,
+//    attr_bits: 0,
+//    cb_mem: null_mut(),
+//    cb_size: 0,
+//    stack_mem: null_mut(),
+//    stack_size: 256,
+//    priority: osPriority_t_osPriorityNormal,
+//    tz_module: 0,
+//    reserved: 0
+//  };
 
-    if 0 != rc {
-      d_println!(get_debug_log(), "rtos_os_timer_start {} failed {:?}", tick_interval, rc);
-    }
+//  let attr_ptr: *const osThreadAttr_t = &task_attr as *const _ ;
 
-  }
 
+ let tid = cmsis_rtos2::rtos_os_thread_new(
+   Some(task_imu_driver),
+   null_mut(),
+   null(),
+ );
+
+ if tid.is_null() {
+   d_println!(get_debug_log(), "setup_imu_task failed!");
+ }
 }
+
 
 
 #[cfg(feature = "stm32f4x")]
@@ -275,6 +315,7 @@ fn setup_peripherals_f4x()  {
     USER_LED_1.borrow(cs).replace(Some(user_led1));
     IMU_DRIVER.borrow(cs).replace(Some(imu_driver));
     APP_DELAY_SOURCE.borrow(cs).replace(Some(delay_source));
+//    APP_ITM.borrow(cs).replace(Some(cp.ITM));
   });
 
 }
@@ -355,17 +396,16 @@ fn main() -> ! {
   configure_rtos();
 
   // start the blinking task
-  setup_repeated_blink_timer();
-  // initialize the IMU
+  setup_blink_task();
+
+  // initialize the IMU task
   setup_imu();
 
   start_rtos();
 
   loop {
-    //typically this is never called
-    //d_println!(get_debug_log(),"mainloop");
-    //one hz heartbeat
-    cmsis_rtos2::rtos_os_delay(1000);
+    //typically this is never called after the rtos starts
+    d_println!(get_debug_log(),"mainloop");
   }
 
 }

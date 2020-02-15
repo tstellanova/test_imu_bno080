@@ -17,6 +17,7 @@
                 "board/st_nucleo_h743zi.cfg"
                 //"board/stm32f4discovery.cfg"
                 //"target/stm32f4x.cfg"
+                //"board/stm32f401cxux.cfg"
             ],
             "swoConfig": {
                 "enabled": true,
