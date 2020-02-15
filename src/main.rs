@@ -17,6 +17,9 @@ use stm32h7xx_hal as processor_hal;
 #[cfg(feature = "stm32f4x")]
 use stm32f4xx_hal as processor_hal;
 
+#[cfg(feature = "stm32f3x")]
+use stm32f3xx_hal as processor_hal;
+
 use processor_hal::prelude::*;
 use processor_hal::stm32 as pac;
 use pac::I2C1;
@@ -67,6 +70,12 @@ const IMU_REPORTING_RATE_HZ: u16 = 100;
 const IMU_REPORTING_INTERVAL_TICKS: u16 = (SYSCLOCK_TICK_RATE_HZ / IMU_REPORTING_RATE_HZ) ;
 const IMU_REPORTING_INTERVAL_MS: u16 = (1000 / IMU_REPORTING_RATE_HZ) ;
 
+
+#[cfg(feature = "stm32f3x")]
+#[allow(non_upper_case_globals)]
+#[no_mangle]
+pub static SystemCoreClock: u32 =  36_000_000; //same as stm32f3xx_hal::rcc::HSI
+
 #[cfg(feature = "stm32f4x")]
 #[allow(non_upper_case_globals)]
 #[no_mangle]
@@ -79,6 +88,13 @@ pub static SystemCoreClock: u32 =  16_000_000; //same as stm32f4xx_hal::rcc::HSI
 pub static SystemCoreClock: u32 = 48_000_000; //stm32h743 HSI (48 MHz)
 
 
+#[cfg(feature = "stm32f3x")]
+type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
+  (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::AF4>,
+   processor_hal::gpio::gpiob::PB9<processor_hal::gpio::AF4>)
+>>;
+
+#[cfg(not(feature = "stm32f3x"))]
 type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
   (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>,
    processor_hal::gpio::gpiob::PB9<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>)
@@ -89,6 +105,10 @@ type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
 #[cfg(debug_assertions)]
 type DebugLog = cortex_m_log::printer::dummy::Dummy;
 //type DebugLog = cortex_m_log::printer::semihosting::Semihosting<cortex_m_log::modes::InterruptFree, cortex_m_semihosting::hio::HStdout>;
+
+
+#[cfg(feature = "stm32f3x")]
+type GpioTypeUserLed1 =  processor_hal::gpio::gpiod::PD13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
 
 #[cfg(feature = "stm32f4x")]
 type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
@@ -284,6 +304,42 @@ pub fn setup_imu_task() {
 }
 
 
+#[cfg(feature = "stm32f3x")]
+fn setup_peripherals_f3x()  {
+  let dp = pac::Peripherals::take().unwrap();
+  let cp = cortex_m::Peripherals::take().unwrap();
+
+  // Set up the system clock
+  let rcc = dp.RCC.constrain();
+
+  let pwr = dp.PWR.constrain();
+  let vos = pwr.freeze();
+
+  //use the existing sysclk
+  let mut ccdr = rcc.freeze(vos, &dp.SYSCFG);
+  let clocks = ccdr.clocks;
+  let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
+
+  let gpiob = dp.GPIOB.split(&mut ccdr.ahb4);
+
+  let mut user_led1 = gpiob.pb0.into_push_pull_output();
+  //set initial states of user LEDs
+  user_led1.set_high().unwrap();
+
+  // setup i2c1 and imu driver
+  let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
+  let sda = gpiob.pb9.into_alternate_af4().internal_pull_up(true).set_open_drain();
+  let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), &ccdr);
+  let imu_driver = BNO080::new(imu_i2c_port);
+
+  //store shared peripherals
+  interrupt::free(|cs| {
+    USER_LED_1.borrow(cs).replace(Some(user_led1));
+    IMU_DRIVER.borrow(cs).replace(Some(imu_driver));
+    APP_DELAY_SOURCE.borrow(cs).replace(Some(delay_source));
+  });
+
+}
 
 #[cfg(feature = "stm32f4x")]
 fn setup_peripherals_f4x()  {
@@ -359,6 +415,9 @@ fn setup_peripherals_h7x()  {
 
 /// Setup peripherals such as GPIO
 fn setup_peripherals()  {
+
+  #[cfg(feature = "stm32f3x")]
+  setup_peripherals_f3x();
 
   #[cfg(feature = "stm32f4x")]
   setup_peripherals_f4x();
