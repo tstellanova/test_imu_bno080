@@ -14,7 +14,8 @@
             "runToMain":true,
             "configFiles": [
                 "interface/stlink.cfg",
-                "board/st_nucleo_h743zi.cfg"
+                "target/stm32f3x.cfg"
+                //"board/st_nucleo_h743zi.cfg"
                 //"board/stm32f4discovery.cfg"
                 //"target/stm32f4x.cfg"
                 //"board/stm32f401cxux.cfg"

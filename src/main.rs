@@ -3,9 +3,9 @@
 #![no_main]
 #![no_std]
 
-extern crate panic_halt;
+ extern crate panic_halt;
 // extern crate panic_itm;
-//extern crate panic_semihosting;
+// extern crate panic_semihosting;
 
 
 use core::cell::RefCell;
@@ -49,8 +49,8 @@ use cortex_m_log::{d_println};
 //  destination::Itm, printer::itm::InterruptSync as InterruptSyncItm,
 //};
 
-//#[cfg(debug_assertions)]
-//use cortex_m_log::printer::semihosting;
+// #[cfg(debug_assertions)]
+// use cortex_m_log::printer::semihosting;
 
 //#[cfg(debug_assertions)]
 //use cortex_m_semihosting;
@@ -75,7 +75,7 @@ const IMU_REPORTING_INTERVAL_MS: u16 = (1000 / IMU_REPORTING_RATE_HZ) ;
 #[cfg(feature = "stm32f3x")]
 #[allow(non_upper_case_globals)]
 #[no_mangle]
-pub static SystemCoreClock: u32 =  36_000_000; //same as stm32f3xx_hal::rcc::HSI
+pub static SystemCoreClock: u32 =  8_000_000; //same as stm32f3xx_hal::rcc::HSI
 
 #[cfg(feature = "stm32f4x")]
 #[allow(non_upper_case_globals)]
@@ -102,10 +102,6 @@ type ImuI2cPortType = processor_hal::i2c::I2c<I2C1,
    processor_hal::gpio::gpiob::PB9<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>)
 >;
 
-//type ImuDriverType = bno080::BNO080<processor_hal::i2c::I2c<I2C1,
-//  (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>,
-//   processor_hal::gpio::gpiob::PB9<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>)
-//>>;
 
 type ImuDriverType = bno080::BNO080<ImuI2cPortType>;
 
@@ -117,7 +113,7 @@ type DebugLog = cortex_m_log::printer::dummy::Dummy;
 
 
 #[cfg(feature = "stm32f3x")]
-type GpioTypeUserLed1 =  processor_hal::gpio::gpiod::PD13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
+type GpioTypeUserLed1 =  processor_hal::gpio::gpiob::PB6<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
 
 #[cfg(feature = "stm32f4x")]
 type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
@@ -306,9 +302,9 @@ fn setup_peripherals_f3x()  {
   let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
   let mut gpiob = dp.GPIOB.split(&mut rcc.ahb);
-  let mut gpiod = dp.GPIOD.split(&mut rcc.ahb);
+  //let mut gpiod = dp.GPIOD.split(&mut rcc.ahb);
 
-  let mut user_led1 = gpiod.pd13.into_push_pull_output(&mut gpiod.moder, &mut gpiod.otyper);
+  let mut user_led1 = gpiob.pb6.into_push_pull_output(&mut gpiob.moder, &mut gpiob.otyper);
   //set initial states of user LEDs
   user_led1.set_high().unwrap();
 
