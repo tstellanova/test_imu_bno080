@@ -64,7 +64,10 @@ use core::ops::{DerefMut};
 use core::ptr::{null, null_mut};
 use bno080::*;
 
- const SYSCLOCK_TICK_RATE_HZ: u16 = 1000;
+//use processor_hal::rcc::APB1;
+//use processor_hal::flash;
+
+const SYSCLOCK_TICK_RATE_HZ: u16 = 1000;
 const HEARTBEAT_BLINK_RATE_HZ: u16 =  1;
 const IMU_REPORTING_RATE_HZ: u16 = 100;
 const IMU_REPORTING_INTERVAL_TICKS: u16 = (SYSCLOCK_TICK_RATE_HZ / IMU_REPORTING_RATE_HZ) ;
@@ -314,22 +317,37 @@ fn setup_peripherals_f3x()  {
 
   let pwr = dp.PWR.constrain();
   let vos = pwr.freeze();
+  let mut flash = dp.FLASH.constrain();
+
+  //let clocks = rcc.cfgr.freeze(&mut flash.acr);
 
   //use the existing sysclk
-  let mut ccdr = rcc.freeze(vos, &dp.SYSCFG);
+  let mut ccdr = rcc.freeze(vos, &dp.SYSCFG, &mut flash.acr);
+
   let clocks = ccdr.clocks;
   let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
   let gpiob = dp.GPIOB.split(&mut ccdr.ahb4);
+  let gpiod = dp.GPIOD.split(&mut ccdr.ahb4);
 
-  let mut user_led1 = gpiob.pb0.into_push_pull_output();
+
+  let mut user_led1 = gpiod.pd13.into_push_pull_output();
   //set initial states of user LEDs
   user_led1.set_high().unwrap();
 
+//  i2c: $I2CX,
+//  pins: (SCL, SDA),
+//  freq: F,
+//  clocks: Clocks,
+//  apb1: &mut APB1,
+
   // setup i2c1 and imu driver
-  let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
+  let scl = gpiob.pb8.into_af4().internal_pull_up(true).set_open_drain();
   let sda = gpiob.pb9.into_alternate_af4().internal_pull_up(true).set_open_drain();
-  let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), &ccdr);
+
+  use processor_hal::rcc::APB1;
+
+  let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), &ccdr, &processor_hal::rcc::APB1);
   let imu_driver = BNO080::new(imu_i2c_port);
 
   //store shared peripherals
