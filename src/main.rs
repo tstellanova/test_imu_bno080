@@ -144,8 +144,8 @@ fn DefaultHandler(_irqn: i16) {
 
 // cortex-m-rt calls this for serious faults.  can set a breakpoint to debug
 #[exception]
-fn HardFault(ef: &ExceptionFrame) -> ! {
-  d_println!(get_debug_log(),  "HardFault: {:?}", ef);
+fn HardFault(_ef: &ExceptionFrame) -> ! {
+  d_println!(get_debug_log(),  "HardFault: {:?}", _ef);
   loop { }
 }
 
@@ -166,13 +166,6 @@ unsafe fn UsageFault() -> ! {
   d_println!(get_debug_log(),  "UsageFault");
   loop { }
 }
-
-//#[exception]
-//unsafe fn PendSV() -> ! {
-//  d_println!(get_debug_log(),  "PendSV");
-//  loop { }
-//}
-
 
 
 /// Called by rtos on assert failures
@@ -285,21 +278,6 @@ extern "C" fn task_imu_driver(_arg: *mut cty::c_void) {
 
 
 pub fn setup_imu_task() {
-
-//  let task_attr = osThreadAttr_t {
-//    name: "imu\0".as_ptr() ,
-//    attr_bits: 0,
-//    cb_mem: null_mut(),
-//    cb_size: 0,
-//    stack_mem: null_mut(),
-//    stack_size: 256,
-//    priority: osPriority_t_osPriorityNormal,
-//    tz_module: 0,
-//    reserved: 0
-//  };
-
-//  let attr_ptr: *const osThreadAttr_t = &task_attr as *const _ ;
-
 
  let tid = cmsis_rtos2::rtos_os_thread_new(
    Some(task_imu_driver),
@@ -475,7 +453,7 @@ fn main() -> ! {
   setup_blink_task();
 
   // initialize the IMU task
-  setup_imu();
+  //setup_imu();
 
   start_rtos();
 
