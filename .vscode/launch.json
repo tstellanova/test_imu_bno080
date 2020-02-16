@@ -14,14 +14,14 @@
             "runToMain":true,
             "configFiles": [
                 "interface/stlink.cfg",
-                "target/stm32f3x.cfg"
+                //"target/stm32f3x.cfg"
                 //"board/st_nucleo_h743zi.cfg"
                 //"board/stm32f4discovery.cfg"
-                //"target/stm32f4x.cfg"
+                "target/stm32f4x.cfg"
                 //"board/stm32f401cxux.cfg"
             ],
             "swoConfig": {
-                "enabled": true,
+                "enabled": false,
                 "cpuFrequency": 48000000,
                 "swoFrequency": 2000000,
                 "source": "probe",

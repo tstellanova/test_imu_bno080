@@ -116,7 +116,8 @@ type DebugLog = cortex_m_log::printer::dummy::Dummy;
 type GpioTypeUserLed1 =  processor_hal::gpio::gpiob::PB6<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
 
 #[cfg(feature = "stm32f4x")]
-type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
+type GpioTypeUserLed1 =  processor_hal::gpio::gpiod::PD12<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
+//type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
 
 #[cfg(feature = "stm32h7x")]
 type GpioTypeUserLed1 =  processor_hal::gpio::gpiob::PB0<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
@@ -344,9 +345,11 @@ fn setup_peripherals_f4x()  {
   let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
   let gpiob = dp.GPIOB.split();
-  let gpioc = dp.GPIOC.split();
+  //let gpioc = dp.GPIOC.split();
+  let gpiod = dp.GPIOD.split();
 
-  let mut user_led1 = gpioc.pc13.into_push_pull_output();
+  let mut user_led1 = gpiod.pd12.into_push_pull_output(); //f4discovery
+  //let mut user_led1 = gpioc.pc13.into_push_pull_output(); //f401CxUx
   //set initial states of user LEDs
   user_led1.set_high().unwrap();
 
@@ -449,7 +452,7 @@ fn main() -> ! {
   setup_blink_task();
 
   // initialize the IMU task
-  //setup_imu();
+  setup_imu();
 
   start_rtos();
 
