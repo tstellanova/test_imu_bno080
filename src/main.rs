@@ -319,7 +319,7 @@ fn setup_peripherals_f3x()  {
   let cp = cortex_m::Peripherals::take().unwrap();
 
   // Set up the system clock
-  let rcc = dp.RCC.constrain();
+  let mut rcc = dp.RCC.constrain();
   let mut flash = dp.FLASH.constrain();
 
   //use the existing sysclk
@@ -327,8 +327,8 @@ fn setup_peripherals_f3x()  {
 
   let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
-  let gpiob = dp.GPIOB.split(&mut rcc.ahb);
-  let gpiod = dp.GPIOD.split(&mut rcc.ahb);
+  let mut gpiob = dp.GPIOB.split(&mut rcc.ahb);
+  let mut gpiod = dp.GPIOD.split(&mut rcc.ahb);
 
   let mut user_led1 = gpiod.pd13.into_push_pull_output(&mut gpiod.moder, &mut gpiod.otyper);
   //set initial states of user LEDs
@@ -336,13 +336,13 @@ fn setup_peripherals_f3x()  {
 
   // setup i2c1 and imu driver
   let scl = gpiob.pb8
-      .into_af4(&mut gpiob.moder, &mut gpiob.afrh)
-      //.internal_pull_up(&mut gpiob.pupdr, true)
-      .into_open_drain_output(&mut gpiob.moder, &mut gpiob.otyper);
+      .into_af4(&mut gpiob.moder, &mut gpiob.afrh);
+      //.internal_pull_up(&mut gpiob.pupdr, true);
+      //.into_open_drain_output(&mut gpiob.moder, &mut gpiob.otyper);
   let sda = gpiob.pb9
-      .into_af4(&mut gpiob.moder, &mut gpiob.afrh)
+      .into_af4(&mut gpiob.moder, &mut gpiob.afrh);
       //.internal_pull_up(&mut gpiob.pupdr, true)
-      .into_open_drain_output(&mut gpiob.moder, &mut gpiob.otyper);
+      //.into_open_drain_output(&mut gpiob.moder, &mut gpiob.otyper);
 
   // <stm32f3xx_hal::gpio::gpiob::PB8<stm32f3xx_hal::gpio::AF4> as stm32f3xx_hal::i2c::SclPin<stm32f3::stm32f3x4::I2C1>>
 
