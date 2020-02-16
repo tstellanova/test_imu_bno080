@@ -336,15 +336,14 @@ fn setup_peripherals_f3x()  {
 
   // setup i2c1 and imu driver
   let scl = gpiob.pb8
+      .into_open_drain_output(&mut gpiob.moder, &mut gpiob.otyper)
       .into_af4(&mut gpiob.moder, &mut gpiob.afrh);
-      //.internal_pull_up(&mut gpiob.pupdr, true);
-      //.into_open_drain_output(&mut gpiob.moder, &mut gpiob.otyper);
-  let sda = gpiob.pb9
-      .into_af4(&mut gpiob.moder, &mut gpiob.afrh);
-      //.internal_pull_up(&mut gpiob.pupdr, true)
-      //.into_open_drain_output(&mut gpiob.moder, &mut gpiob.otyper);
+  //scl.internal_pull_up(&mut gpiob.pupdr, true);
 
-  // <stm32f3xx_hal::gpio::gpiob::PB8<stm32f3xx_hal::gpio::AF4> as stm32f3xx_hal::i2c::SclPin<stm32f3::stm32f3x4::I2C1>>
+  let sda = gpiob.pb9
+      .into_open_drain_output(&mut gpiob.moder, &mut gpiob.otyper)
+      .into_af4(&mut gpiob.moder, &mut gpiob.afrh);
+  //sda.internal_pull_up(&mut gpiob.pupdr, true);
 
   let imu_i2c_port = processor_hal::i2c::I2c::i2c1(
     dp.I2C1, (scl, sda), 400.khz(), clocks, &mut rcc.apb1);
