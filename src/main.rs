@@ -262,8 +262,8 @@ pub fn spin_imu_driver() -> ! {
     let mut msg_count = 0;
     interrupt::free(|cs| {
       if let Some(ref mut imu_driver) = IMU_DRIVER.borrow(cs).borrow_mut().deref_mut() {
-        //msg_count = imu_driver.get_received_packet_count();
-        msg_count = imu_driver.handle_all_messages();
+        msg_count = imu_driver.get_received_packet_count();
+        //msg_count = imu_driver.handle_all_messages();
       }
     });
     if msg_count < 1 {
