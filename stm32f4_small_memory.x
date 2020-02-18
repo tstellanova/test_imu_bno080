@@ -1,11 +1,11 @@
-/* Memory layout for stm32f407 */
+/* A conservative small memory layout for stm32f4 series */
 MEMORY
 {
   /* NOTE K = 1024 bytes */
   /* FLASH and RAM are mandatory memory regions */
 
-  FLASH  : ORIGIN = 0x08000000, LENGTH = 512K
-  RAM    : ORIGIN = 0x20000000, LENGTH = 112K
+  FLASH  : ORIGIN = 0x08000000, LENGTH = 64K
+  RAM    : ORIGIN = 0x20000000, LENGTH = 32K
 }
 
 /*

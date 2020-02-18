@@ -1,3 +1,4 @@
+/* Memory layout for stm32h743 */
 MEMORY
 {
   /* FLASH and RAM are mandatory memory regions */

@@ -1,13 +1,19 @@
+/* Memory layout for stm32f401 */
 MEMORY
 {
+  /* NOTE K = 1024 bytes */
   /* FLASH and RAM are mandatory memory regions */
+
   FLASH  : ORIGIN = 0x08000000, LENGTH = 256K
   RAM    : ORIGIN = 0x20000000, LENGTH = 64K
 
 }
 
-/* The location of the stack can be overridden using the
-   `_stack_start` symbol.  Place the stack at the end of RAM */
+/*
+This is where the call stack will be allocated.
+The stack is of the full descending type.
+Place the stack at the end of RAM.
+*/
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
 /* The location of the .text section can be overridden using the

@@ -81,7 +81,8 @@ pub static SystemCoreClock: u32 =  8_000_000; //same as stm32f3xx_hal::rcc::HSI
 #[allow(non_upper_case_globals)]
 #[no_mangle]
 pub static SystemCoreClock: u32 =  16_000_000; //same as stm32f4xx_hal::rcc::HSI
-// pub static SystemCoreClock: u32 =  25_000_000; // eg stm32f401 board with 25 MHz xtal
+// pub static SystemCoreClock: u32 =  25_000_000; // eg stm32f401 board with 25 MHz xtal HSE
+// pub static SystemCoreClock: u32 =  8_000_000; // eg stm32f407 board with 8 MHz xtal HSE
 
 #[cfg(feature = "stm32h7x")]
 #[allow(non_upper_case_globals)]
@@ -96,7 +97,13 @@ type ImuI2cPortType = processor_hal::i2c::I2c<I2C1,
    processor_hal::gpio::gpiob::PB9<processor_hal::gpio::AF4>)
 >;
 
-#[cfg(not(feature = "stm32f3x"))]
+#[cfg(feature = "stm32f4x")]
+type ImuI2cPortType = processor_hal::i2c::I2c<I2C1,
+ (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::AlternateOD<processor_hal::gpio::AF4>>,
+   processor_hal::gpio::gpiob::PB9<processor_hal::gpio::AlternateOD<processor_hal::gpio::AF4>>)
+>;
+
+#[cfg(feature = "stm32h7x")]
 type ImuI2cPortType = processor_hal::i2c::I2c<I2C1,
   (processor_hal::gpio::gpiob::PB8<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>,
    processor_hal::gpio::gpiob::PB9<processor_hal::gpio::Alternate<processor_hal::gpio::AF4>>)
@@ -116,8 +123,8 @@ type DebugLog = cortex_m_log::printer::dummy::Dummy;
 type GpioTypeUserLed1 =  processor_hal::gpio::gpiob::PB6<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
 
 #[cfg(feature = "stm32f4x")]
-type GpioTypeUserLed1 =  processor_hal::gpio::gpiod::PD12<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
-//type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
+type GpioTypeUserLed1 =  processor_hal::gpio::gpioc::PC13<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>; //stm32f401CxUx
+// type GpioTypeUserLed1 =  processor_hal::gpio::gpiod::PD12<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>; //stm32f407disco
 
 #[cfg(feature = "stm32h7x")]
 type GpioTypeUserLed1 =  processor_hal::gpio::gpiob::PB0<processor_hal::gpio::Output<processor_hal::gpio::PushPull>>;
@@ -255,8 +262,8 @@ pub fn spin_imu_driver() -> ! {
     let mut msg_count = 0;
     interrupt::free(|cs| {
       if let Some(ref mut imu_driver) = IMU_DRIVER.borrow(cs).borrow_mut().deref_mut() {
-        msg_count = imu_driver.get_received_packet_count();
-        //msg_count = imu_driver.handle_all_messages();
+        //msg_count = imu_driver.get_received_packet_count();
+        msg_count = imu_driver.handle_all_messages();
       }
     });
     if msg_count < 1 {
@@ -340,23 +347,34 @@ fn setup_peripherals_f4x()  {
 
   // Set up the system clock
   let rcc = dp.RCC.constrain();
-  let clocks = rcc.cfgr.freeze(); //use_hse(SystemCoreClock.hz()).freeze();
-  // or:      let clocks = rcc.cfgr.freeze();  // for HSI
+  // HSI: use default internal oscillator
+   let clocks = rcc.cfgr.freeze();
+  // HSE: external crystal oscillator must be connected
+//  let clocks = rcc.cfgr.use_hse(SystemCoreClock.hz()).freeze();
+
   let delay_source =  processor_hal::delay::Delay::new(cp.SYST, clocks);
 
   let gpiob = dp.GPIOB.split();
-  //let gpioc = dp.GPIOC.split();
-  let gpiod = dp.GPIOD.split();
+  let gpioc = dp.GPIOC.split();
+  // let gpiod = dp.GPIOD.split();
 
-  let mut user_led1 = gpiod.pd12.into_push_pull_output(); //f4discovery
-  //let mut user_led1 = gpioc.pc13.into_push_pull_output(); //f401CxUx
+  // let mut user_led1 = gpiod.pd12.into_push_pull_output(); //f4discovery
+ let mut user_led1 = gpioc.pc13.into_push_pull_output(); //f401CxUx
   //set initial states of user LEDs
   user_led1.set_high().unwrap();
 
 
   // setup i2c1 and imu driver
-  let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
-  let sda = gpiob.pb9.into_alternate_af4().internal_pull_up(true).set_open_drain();
+  // NOTE: eg f407 discovery board already has external pull-ups
+ let scl = gpiob.pb8
+     .into_alternate_af4()
+     .internal_pull_up(true)
+     .set_open_drain();
+
+  let sda = gpiob.pb9
+      .into_alternate_af4()
+      .internal_pull_up(true)
+      .set_open_drain();
   let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), clocks);
   let imu_driver = BNO080::new(imu_i2c_port);
 
@@ -395,7 +413,8 @@ fn setup_peripherals_h7x()  {
   // setup i2c1 and imu driver
   let scl = gpiob.pb8.into_alternate_af4().internal_pull_up(true).set_open_drain();
   let sda = gpiob.pb9.into_alternate_af4().internal_pull_up(true).set_open_drain();
-  let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), &ccdr);
+  //  let imu_i2c_port = dp.I2C1.i2c((scl, sda), 400.khz(), clocks);
+  let imu_i2c_port = processor_hal::i2c::I2c::i2c1(dp.I2C1, (scl, sda), 100.khz(), &ccdr);//TODO raise to 400
   let imu_driver = BNO080::new(imu_i2c_port);
 
   //store shared peripherals
