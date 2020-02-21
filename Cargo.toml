@@ -46,7 +46,7 @@ stm32f3xx-hal = { git = "https://github.com/stm32-rs/stm32f3xx-hal",  features =
 
 
 [features]
-default = ["stm32h7x"]
+default = ["stm32f4x"]
 stm32f3x = [ "stm32f3", "stm32f3xx-hal"]
 stm32f4x = [ "stm32f4", "stm32f4xx-hal"]
 stm32h7x = ["stm32h7", "stm32h7xx-hal"]
