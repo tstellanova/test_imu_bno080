@@ -114,15 +114,15 @@ pub type ImuI2cPortType = p_hal::i2c::I2c<I2C1,
 #[cfg(feature = "stm32f4x")]
 pub type SpiPortType = p_hal::spi::Spi<stm32::SPI1,
   (
-    p_hal::gpio::gpiob::PB3<p_hal::gpio::Alternate<p_hal::gpio::AF5>>,
-    p_hal::gpio::gpiob::PB4<p_hal::gpio::Alternate<p_hal::gpio::AF5>>,
-    p_hal::gpio::gpiob::PB5<p_hal::gpio::Alternate<p_hal::gpio::AF5>>,
+    p_hal::gpio::gpiob::PB3<p_hal::gpio::Alternate<p_hal::gpio::AF5>>, //SCLK
+    p_hal::gpio::gpiob::PB4<p_hal::gpio::Alternate<p_hal::gpio::AF5>>, //MISO?
+    p_hal::gpio::gpiob::PB5<p_hal::gpio::Alternate<p_hal::gpio::AF5>>, //MOSI?
   )
 >;
 
-type ChipSelectPinType = p_hal::gpio::gpiob::PB2<p_hal::gpio::Output<p_hal::gpio::PushPull>>;
-type HIntPinType =  p_hal::gpio::gpiob::PB0<p_hal::gpio::Input<p_hal::gpio::Floating>>;
-type WakePinType =  p_hal::gpio::gpiob::PB1<p_hal::gpio::Output<p_hal::gpio::PushPull>>;
+type ChipSelectPinType = p_hal::gpio::gpiob::PB2<p_hal::gpio::Output<p_hal::gpio::PushPull>>; //CSN
+type HIntPinType =  p_hal::gpio::gpiob::PB0<p_hal::gpio::Input<p_hal::gpio::Floating>>; //HINTN
+type WakePinType =  p_hal::gpio::gpiob::PB1<p_hal::gpio::Output<p_hal::gpio::PushPull>>; // WAKE
 type ImuDriverType = bno080::wrapper::BNO080<SpiInterface<SpiPortType, ChipSelectPinType, HIntPinType, WakePinType>>;
 
 
