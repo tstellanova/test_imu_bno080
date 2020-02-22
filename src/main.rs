@@ -123,7 +123,8 @@ pub type SpiPortType = p_hal::spi::Spi<stm32::SPI1,
 type ChipSelectPinType = p_hal::gpio::gpiob::PB2<p_hal::gpio::Output<p_hal::gpio::PushPull>>; //CSN
 type HIntPinType =  p_hal::gpio::gpiob::PB0<p_hal::gpio::Input<p_hal::gpio::Floating>>; //HINTN
 type WakePinType =  p_hal::gpio::gpiob::PB1<p_hal::gpio::Output<p_hal::gpio::PushPull>>; // WAKE
-type ImuDriverType = bno080::wrapper::BNO080<SpiInterface<SpiPortType, ChipSelectPinType, HIntPinType, WakePinType>>;
+type ResetPinType =  p_hal::gpio::gpiob::PB9<p_hal::gpio::Output<p_hal::gpio::PushPull>>; // WAKE
+type ImuDriverType = bno080::wrapper::BNO080<SpiInterface<SpiPortType, ChipSelectPinType, HIntPinType, WakePinType, ResetPinType>>;
 
 
 
@@ -407,7 +408,11 @@ fn setup_peripherals_f4x()  {
   let hintn = gpiob.pb0
       .into_floating_input();
 
-  let spi_iface = bno080::interface::SpiInterface::new(spi_port, cs, hintn, waken);
+  // NRSTN pin
+  let reset_pin = gpiob.pb9
+      .into_push_pull_output();
+
+  let spi_iface = bno080::interface::SpiInterface::new(spi_port, cs, hintn, waken, reset_pin);
   let imu_driver = BNO080::new_with_interface(spi_iface);
 
 
