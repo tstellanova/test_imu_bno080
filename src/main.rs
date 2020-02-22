@@ -118,16 +118,12 @@ pub type SpiPortType = p_hal::spi::Spi<stm32::SPI1,
     p_hal::gpio::gpiob::PB4<p_hal::gpio::Alternate<p_hal::gpio::AF5>>,
     p_hal::gpio::gpiob::PB5<p_hal::gpio::Alternate<p_hal::gpio::AF5>>,
   )
-  // (
-  // PB3<Alternate<PushPull>>,
-  //   PB4<Input<Floating>>,
-  //   PB5<Alternate<PushPull>>,
-  // )
 >;
 
 type ChipSelectPinType = p_hal::gpio::gpiob::PB2<p_hal::gpio::Output<p_hal::gpio::PushPull>>;
-
-type ImuDriverType = bno080::wrapper::BNO080<SpiInterface<SpiPortType, ChipSelectPinType>>;
+type HIntPinType =  p_hal::gpio::gpiob::PB0<p_hal::gpio::Input<p_hal::gpio::Floating>>;
+type WakePinType =  p_hal::gpio::gpiob::PB1<p_hal::gpio::Output<p_hal::gpio::PushPull>>;
+type ImuDriverType = bno080::wrapper::BNO080<SpiInterface<SpiPortType, ChipSelectPinType, HIntPinType, WakePinType>>;
 
 
 
@@ -403,14 +399,17 @@ fn setup_peripherals_f4x()  {
   let cs = gpiob.pb2
       .into_push_pull_output();
 
-  let spi_iface = bno080::interface::SpiInterface::new(spi_port, cs);
+  // WAKEN pin
+  let waken = gpiob.pb1
+      .into_push_pull_output();
+
+  // HINTN interrupt pin
+  let hintn = gpiob.pb0
+      .into_floating_input();
+
+  let spi_iface = bno080::interface::SpiInterface::new(spi_port, cs, hintn, waken);
   let imu_driver = BNO080::new_with_interface(spi_iface);
 
-  // expected type
-  // `bno080::wrapper::BNO080<bno080::interface::spi::SpiInterface<stm32f4xx_hal::spi::Spi<_, (stm32f4xx_hal::gpio::gpiob::PB3<stm32f4xx_hal::gpio::Alternate<stm32f4xx_hal::gpio::PushPull>>, stm32f4xx_hal::gpio::gpiob::PB4<stm32f4xx_hal::gpio::Input<stm32f4xx_hal::gpio::Floating>>, stm32f4xx_hal::gpio::gpiob::PB5<stm32f4xx_hal::gpio::Alternate<stm32f4xx_hal::gpio::PushPull>>)>, stm32f4xx_hal::gpio::gpiob::PB2<stm32f4xx_hal::gpio::PushPull>>>`
-  // found type
-  // `bno080::wrapper::BNO080<bno080::interface::spi::SpiInterface<stm32f4xx_hal::spi::Spi<_, (stm32f4xx_hal::gpio::gpiob::PB3<stm32f4xx_hal::gpio::Alternate<stm32f4xx_hal::gpio::AF5>>, stm32f4xx_hal::gpio::gpiob::PB4<stm32f4xx_hal::gpio::Alternate<stm32f4xx_hal::gpio::AF5>>, stm32f4xx_hal::gpio::gpiob::PB5<stm32f4xx_hal::gpio::Alternate<stm32f4xx_hal::gpio::AF5>>)>, stm32f4xx_hal::gpio::gpiob::PB2<stm32f4xx_hal::gpio::Output<stm32f4xx_hal::gpio::PushPull>>>>`
-  //
 
   //  // setup i2c1 and imu driver
  //  // NOTE: eg f407 discovery board already has external pull-ups
