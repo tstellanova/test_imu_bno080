@@ -49,8 +49,8 @@ use cortex_m_log::{d_println};
 // #[cfg(debug_assertions)]
 // use cortex_m_log::printer::semihosting;
 
-//#[cfg(debug_assertions)]
-//use cortex_m_semihosting;
+// #[cfg(debug_assertions)]
+// use cortex_m_semihosting;
 
 
 use p_hal::gpio::GpioExt;
@@ -164,24 +164,6 @@ fn DefaultHandler(_irqn: i16) {
 #[exception]
 fn HardFault(ef: &ExceptionFrame) -> ! {
   panic!("HardFault: {:?}", ef);
-}
-
-#[exception]
-unsafe fn MemoryManagement() -> ! {
-  d_println!(get_debug_log(),  "MemoryManagement");
-  loop { }
-}
-
-#[exception]
-unsafe fn BusFault() -> ! {
-  d_println!(get_debug_log(),  "BusFault");
-  loop { }
-}
-
-#[exception]
-unsafe fn UsageFault() -> ! {
-  d_println!(get_debug_log(),  "UsageFault");
-  loop { }
 }
 
 
