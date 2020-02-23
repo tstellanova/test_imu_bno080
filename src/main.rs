@@ -376,7 +376,7 @@ fn setup_peripherals_f4x()  {
 
   let spi_port = p_hal::spi::Spi::spi1(
     dp.SPI1, (sck, miso, mosi),
-    embedded_hal::spi::MODE_0, 3_000_000.hz(), clocks );
+    embedded_hal::spi::MODE_3, 3_000_000.hz(), clocks );
 
   // SPI chip select CS
   let cs = gpiob.pb2
