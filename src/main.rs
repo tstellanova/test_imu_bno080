@@ -3,9 +3,9 @@
 #![no_main]
 #![no_std]
 
- extern crate panic_halt;
+ // extern crate panic_halt;
 // extern crate panic_itm;
-// extern crate panic_semihosting;
+extern crate panic_semihosting;
 
 
 use core::cell::RefCell;
@@ -24,7 +24,6 @@ use p_hal::prelude::*;
 use p_hal::stm32 as pac;
 use p_hal::stm32 as stm32;
 use pac::I2C1;
-//use pac::DWT;
 
 
 #[macro_use]
@@ -46,8 +45,8 @@ use cortex_m_log::{d_println};
 //  destination::Itm, printer::itm::InterruptSync as InterruptSyncItm,
 //};
 
-// #[cfg(debug_assertions)]
-// use cortex_m_log::printer::semihosting;
+#[cfg(debug_assertions)]
+use cortex_m_log::printer::semihosting;
 
 // #[cfg(debug_assertions)]
 // use cortex_m_semihosting;
@@ -115,22 +114,21 @@ pub type ImuI2cPortType = p_hal::i2c::I2c<I2C1,
 pub type SpiPortType = p_hal::spi::Spi<stm32::SPI1,
   (
     p_hal::gpio::gpiob::PB3<p_hal::gpio::Alternate<p_hal::gpio::AF5>>, //SCLK
-    p_hal::gpio::gpiob::PB4<p_hal::gpio::Alternate<p_hal::gpio::AF5>>, //MISO?
-    p_hal::gpio::gpiob::PB5<p_hal::gpio::Alternate<p_hal::gpio::AF5>>, //MOSI?
+    p_hal::gpio::gpiob::PB4<p_hal::gpio::Alternate<p_hal::gpio::AF5>>, //MISO
+    p_hal::gpio::gpiob::PB5<p_hal::gpio::Alternate<p_hal::gpio::AF5>>, //MOSI
   )
 >;
 
-type ChipSelectPinType = p_hal::gpio::gpiob::PB2<p_hal::gpio::Output<p_hal::gpio::PushPull>>; //CSN
-type HIntPinType =  p_hal::gpio::gpiob::PB0<p_hal::gpio::Input<p_hal::gpio::Floating>>; //HINTN
+type HIntPinType =  p_hal::gpio::gpiob::PB0<p_hal::gpio::Input<p_hal::gpio::PullUp>>; //HINTN
 type WakePinType =  p_hal::gpio::gpiob::PB1<p_hal::gpio::Output<p_hal::gpio::PushPull>>; // WAKE
-type ResetPinType =  p_hal::gpio::gpiob::PB9<p_hal::gpio::Output<p_hal::gpio::PushPull>>; // WAKE
+type ChipSelectPinType = p_hal::gpio::gpiob::PB2<p_hal::gpio::Output<p_hal::gpio::PushPull>>; //CSN
+type ResetPinType =  p_hal::gpio::gpiob::PB6<p_hal::gpio::Output<p_hal::gpio::PushPull>>; // WAKE
 type ImuDriverType = bno080::wrapper::BNO080<SpiInterface<SpiPortType, ChipSelectPinType, HIntPinType, WakePinType, ResetPinType>>;
 
 
-
 #[cfg(debug_assertions)]
-type DebugLog = cortex_m_log::printer::dummy::Dummy;
-//type DebugLog = cortex_m_log::printer::semihosting::Semihosting<cortex_m_log::modes::InterruptFree, cortex_m_semihosting::hio::HStdout>;
+// type DebugLog = cortex_m_log::printer::dummy::Dummy;
+type DebugLog = cortex_m_log::printer::semihosting::Semihosting<cortex_m_log::modes::InterruptFree, cortex_m_semihosting::hio::HStdout>;
 
 
 #[cfg(feature = "stm32f3x")]
@@ -180,8 +178,8 @@ extern "C" fn handle_assert_failed() -> ! {
 /// Used in debug builds to provide a logging outlet
 #[cfg(debug_assertions)]
 fn get_debug_log() -> DebugLog {
-  cortex_m_log::printer::Dummy::new()
-  //semihosting::InterruptFree::<_>::stdout().unwrap()
+  // cortex_m_log::printer::Dummy::new()
+  semihosting::InterruptFree::<_>::stdout().unwrap()
 
 }
 
@@ -195,12 +193,19 @@ fn toggle_leds() {
   });
 }
 
+
+fn debug_func( data: usize) {
+  d_println!(get_debug_log(), "dbgz {:?}", data);
+
+}
+
 pub fn setup_imu() {
   // initialize the IMU
   let mut res = Ok(());
   interrupt::free(|cs| {
     if let Some(ref mut imu_driver) = IMU_DRIVER.borrow(cs).borrow_mut().deref_mut() {
       if let Some(delay_source) = APP_DELAY_SOURCE.borrow(cs).borrow_mut().deref_mut() {
+        imu_driver.enable_debugging(debug_func);
         res = imu_driver.init(delay_source);
         if res.is_ok() {
           res = imu_driver.enable_rotation_vector(IMU_REPORTING_INTERVAL_MS);
@@ -292,7 +297,7 @@ pub fn setup_imu_task() {
 
 
 #[cfg(feature = "stm32f3x")]
-fn setup_peripherals_f3x()  {
+fn setup_peripherals()  {
   let dp = pac::Peripherals::take().unwrap();
   let cp = cortex_m::Peripherals::take().unwrap();
 
@@ -337,7 +342,7 @@ fn setup_peripherals_f3x()  {
 }
 
 #[cfg(feature = "stm32f4x")]
-fn setup_peripherals_f4x()  {
+fn setup_peripherals()  {
   let dp = pac::Peripherals::take().unwrap();
   let cp = cortex_m::Peripherals::take().unwrap();
 
@@ -361,6 +366,7 @@ fn setup_peripherals_f4x()  {
   //set initial states of user LEDs
   user_led1.set_high().unwrap();
 
+
   //SPI1_SCK
   let sck = gpiob.pb3
       .into_push_pull_output()
@@ -378,23 +384,24 @@ fn setup_peripherals_f4x()  {
     dp.SPI1, (sck, miso, mosi),
     embedded_hal::spi::MODE_3, 3_000_000.hz(), clocks );
 
-  // SPI chip select CS
-  let cs = gpiob.pb2
-      .into_push_pull_output();
+  // HINTN interrupt pin
+  let hintn = gpiob.pb0
+      .into_pull_up_input();
 
   // WAKEN pin
   let waken = gpiob.pb1
       .into_push_pull_output();
 
-  // HINTN interrupt pin
-  let hintn = gpiob.pb0
-      .into_floating_input();
-
-  // NRSTN pin
-  let reset_pin = gpiob.pb9
+  // SPI chip select CS
+  let csn = gpiob.pb2
       .into_push_pull_output();
 
-  let spi_iface = bno080::interface::SpiInterface::new(spi_port, cs, hintn, waken, reset_pin);
+  // NRSTN pin
+  let rst = gpiob.pb6
+      .into_push_pull_output();
+
+  let spi_iface = bno080::interface::SpiInterface::new(
+    spi_port, csn, hintn, waken, rst);
   let imu_driver = BNO080::new_with_interface(spi_iface);
 
 
@@ -424,7 +431,7 @@ fn setup_peripherals_f4x()  {
 }
 
 #[cfg(feature = "stm32h7x")]
-fn setup_peripherals_h7x()  {
+fn setup_peripherals()  {
   let dp = pac::Peripherals::take().unwrap();
   let cp = cortex_m::Peripherals::take().unwrap();
 
@@ -465,31 +472,19 @@ fn setup_peripherals_h7x()  {
 
 }
 
-/// Setup peripherals such as GPIO
-fn setup_peripherals()  {
-
-  #[cfg(feature = "stm32f3x")]
-  setup_peripherals_f3x();
-
-  #[cfg(feature = "stm32f4x")]
-  setup_peripherals_f4x();
-
-  #[cfg(feature = "stm32h7x")]
-  setup_peripherals_h7x();
-
-}
 
 /// Configure and start the RTOS
 fn configure_rtos() {
-
   let _rc = cmsis_rtos2::rtos_kernel_initialize();
-  d_println!(get_debug_log(), "kernel_initialize rc: {}", _rc);
+  if 0 != _rc {
+    d_println!(get_debug_log(), "kernel_initialize rc: {}", _rc);
+  }
 
   let _tick_hz = cmsis_rtos2::rtos_kernel_get_tick_freq_hz();
-  d_println!(get_debug_log(), "tick_hz : {}", _tick_hz);
+  //d_println!(get_debug_log(), "tick_hz : {}", _tick_hz);
 
   let _sys_timer_hz = cmsis_rtos2::rtos_kernel_get_sys_timer_freq_hz();
-  d_println!(get_debug_log(), "sys_timer_hz : {}", _sys_timer_hz);
+ // d_println!(get_debug_log(), "sys_timer_hz : {}", _sys_timer_hz);
 
 }
 

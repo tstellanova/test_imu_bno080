@@ -15,9 +15,9 @@ cortex-m-rt = "0.6.11"
 cmsis-rtos2  = { git = "https://github.com/tstellanova/cmsis_rtos2_rs.git" }
 
 # panic support
-panic-halt = "0.2.0"
+#panic-halt = "0.2.0"
 #panic-itm = "~0.4.1"
-#panic-semihosting = "0.5.3"
+panic-semihosting = "0.5.3"
 
 # logging support
 cortex-m-log = { version = "0.6.1", features = ["log-integration", "itm", "semihosting"] }
